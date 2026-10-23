@@ -54,12 +54,15 @@ struct RecentEntry: Identifiable, Codable, Hashable {
     var page: Int
     var pageCount: Int
     var updatedAt: Date
+    /// nil for entries written before 1.1
+    var isFolder: Bool?
 
     var id: String { urlString }
 
     var item: WebDAVItem? {
         guard let url = URL(string: urlString) else { return nil }
-        return WebDAVItem.make(url: url, name: name, isDirectory: false)
+        return WebDAVItem(url: url, name: name, isDirectory: isFolder ?? false,
+                          size: 0, modified: nil)
     }
 
     var progressText: String {

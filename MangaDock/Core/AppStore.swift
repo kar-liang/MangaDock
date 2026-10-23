@@ -86,12 +86,12 @@ final class AppStore: ObservableObject {
         recent.first(where: { $0.urlString == url.absoluteString })?.page ?? 0
     }
 
-    func recordPage(url: URL, name: String, page: Int, pageCount: Int) {
+    func recordPage(url: URL, name: String, page: Int, pageCount: Int, isFolder: Bool = false) {
         guard pageCount > 0 else { return }
         var list = recent.filter { $0.urlString != url.absoluteString }
         list.insert(
             RecentEntry(urlString: url.absoluteString, name: name, page: page,
-                        pageCount: pageCount, updatedAt: Date()),
+                        pageCount: pageCount, updatedAt: Date(), isFolder: isFolder),
             at: 0
         )
         if list.count > 30 { list = Array(list.prefix(30)) }

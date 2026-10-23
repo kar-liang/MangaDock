@@ -3,10 +3,13 @@ import SwiftUI
 struct ComicPageView: View {
     @ObservedObject var model: ReaderModel
     let index: Int
+    /// Vertical (webtoon) mode taps the page itself to toggle the chrome,
+    /// because an overlay would block scrolling. Nil in paged mode, where
+    /// PagePager's gesture recogniser handles taps.
+    var onTap: (() -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
-    @State private var isLoading = false
 
     var body: some View {
         ZStack {
@@ -35,6 +38,10 @@ struct ComicPageView: View {
                     .progressViewStyle(.circular)
                     .tint(.white)
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap?()
         }
         .task(id: index) {
             await load()

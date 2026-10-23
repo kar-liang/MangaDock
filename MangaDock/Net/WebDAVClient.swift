@@ -130,6 +130,41 @@ final class WebDAVClient: @unchecked Sendable {
         try manager.moveItem(at: temporaryURL, to: destination)
     }
 
+    /// Fetches a byte range. Returns nil when the server ignores Range (answers 200
+    /// with the whole file) — callers then fall back instead of buffering 50 MB.
+    func data(_ url: URL, byteRange: ClosedRange<Int64>) async throws -> Data? {
+        var request = makeRequest(url: url, method: "GET")
+        request.setValue("bytes=\(byteRange.lowerBound)-\(byteRange.upperBound)",
+                         forHTTPHeaderField: "Range")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 206 else { return nil }
+        return data
+    }
+
+    func contentLength(_ url: URL) async throws -> Int64? {
+        let head = makeRequest(url: url, method: "HEAD")
+        let (_, headResponse) = try await session.data(for: head)
+        if let http = headResponse as? HTTPURLResponse,
+           http.statusCode == 200 || http.statusCode == 206,
+           let value = http.value(forHTTPHeaderField: "Content-Length"),
+           let length = Int64(value), length > 0 {
+            return length
+        }
+
+        // Some WebDAV backends reject HEAD; ask for one byte and read Content-Range.
+        var probe = makeRequest(url: url, method: "GET")
+        probe.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        let (_, probeResponse) = try await session.data(for: probe)
+        if let http = probeResponse as? HTTPURLResponse,
+           http.statusCode == 206,
+           let range = http.value(forHTTPHeaderField: "Content-Range"),
+           let total = range.split(separator: "/").last,
+           let length = Int64(total) {
+            return length
+        }
+        return nil
+    }
+
     /// Cheap connectivity probe: PROPFIND with Depth 0 on the configured root.
     func probe() async throws -> String {
         let items = try await list(baseURL)

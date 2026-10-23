@@ -15,30 +15,30 @@ struct ReaderView: View {
         _model = StateObject(wrappedValue: ReaderModel(item: item))
     }
 
+    private var readerReady: Bool {
+        !model.isLoading && model.errorMessage == nil && model.pageCount > 0
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             content
 
-            if showBars, !model.isLoading, model.errorMessage == nil {
+            if showBars && readerReady {
                 bars
             }
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .statusBarHidden(!showBars)
-        .task {
-            await reload()
-        }
+        .task { await reload() }
         .onChange(of: model.index) { newValue in
             guard model.pageCount > 0 else { return }
-            store.recordPage(url: item.url, name: item.name,
-                             page: newValue, pageCount: model.pageCount)
+            saveProgress(page: newValue)
         }
         .onDisappear {
             guard model.pageCount > 0 else { return }
-            store.recordPage(url: item.url, name: item.name,
-                             page: model.index, pageCount: model.pageCount)
+            saveProgress(page: model.index)
         }
     }
 
@@ -55,11 +55,12 @@ struct ReaderView: View {
         } else if verticalMode {
             verticalReader
         } else {
-            ZStack {
-                PagePager(model: model, index: $model.index)
-                    .ignoresSafeArea()
-                tapZones
-            }
+            PagePager(model: model,
+                      index: $model.index,
+                      onTapLeft: handleTapLeft,
+                      onTapCenter: toggleBars,
+                      onTapRight: handleTapRight)
+                .ignoresSafeArea()
         }
     }
 
@@ -110,7 +111,7 @@ struct ReaderView: View {
         ScrollView {
             LazyVStack(spacing: 6) {
                 ForEach(0..<model.pageCount, id: \.self) { position in
-                    ComicPageView(model: model, index: position)
+                    ComicPageView(model: model, index: position, onTap: toggleBars)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -119,22 +120,24 @@ struct ReaderView: View {
         .background(Color.black)
     }
 
-    private var tapZones: some View {
-        HStack(spacing: 0) {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { model.step(-1) }
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        showBars.toggle()
-                    }
-                }
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { model.step(1) }
-        }
+    // MARK: - Tap handling
+
+    /// While the chrome is hidden, *any* tap brings it back — you can never get
+    /// stuck with an invisible toolbar again.
+    private func handleTapLeft() {
+        if showBars { model.step(-1) } else { revealBars() }
+    }
+
+    private func handleTapRight() {
+        if showBars { model.step(1) } else { revealBars() }
+    }
+
+    private func toggleBars() {
+        withAnimation(.easeInOut(duration: 0.15)) { showBars.toggle() }
+    }
+
+    private func revealBars() {
+        withAnimation(.easeInOut(duration: 0.15)) { showBars = true }
     }
 
     // MARK: - Bars
@@ -156,7 +159,8 @@ struct ReaderView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(.white)
                         .lineLimit(1)
-                    Text("第 \(model.index + 1) / \(model.pageCount) 页")
+                    Text(verticalMode ? "共 \(model.pageCount) 页"
+                                      : "第 \(model.index + 1) / \(model.pageCount) 页")
                         .font(.caption)
                         .foregroundColor(.white.opacity(0.65))
                 }
@@ -186,20 +190,32 @@ struct ReaderView: View {
                 Button { model.step(-10) } label: {
                     Image(systemName: "gobackward.10").foregroundColor(.white)
                 }
+                .disabled(verticalMode)
+                .opacity(verticalMode ? 0.35 : 1)
+
                 Button { model.step(-1) } label: {
                     Image(systemName: "chevron.left.circle").foregroundColor(.white)
                 }
+                .disabled(verticalMode)
+                .opacity(verticalMode ? 0.35 : 1)
+
                 Button {
                     withAnimation { showBars = false }
                 } label: {
                     Image(systemName: "eye.slash").foregroundColor(.white)
                 }
+
                 Button { model.step(1) } label: {
                     Image(systemName: "chevron.right.circle").foregroundColor(.white)
                 }
+                .disabled(verticalMode)
+                .opacity(verticalMode ? 0.35 : 1)
+
                 Button { model.step(10) } label: {
                     Image(systemName: "goforward.10").foregroundColor(.white)
                 }
+                .disabled(verticalMode)
+                .opacity(verticalMode ? 0.35 : 1)
             }
             .font(.system(size: 22))
             .padding(.bottom, 20)
@@ -213,6 +229,8 @@ struct ReaderView: View {
         .transition(.opacity)
     }
 
+    // MARK: - Loading
+
     private func reload() async {
         guard let client = store.makeClient() else {
             model.errorMessage = "还没有配置服务器"
@@ -220,5 +238,13 @@ struct ReaderView: View {
             return
         }
         await model.load(client: client, startPage: store.recentPage(for: item.url))
+    }
+
+    private func saveProgress(page: Int) {
+        store.recordPage(url: item.url,
+                         name: item.name,
+                         page: page,
+                         pageCount: model.pageCount,
+                         isFolder: item.isDirectory)
     }
 }

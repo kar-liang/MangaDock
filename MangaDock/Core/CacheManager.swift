@@ -9,6 +9,7 @@ enum CacheManager {
 
     static var booksDirectory: URL { root.appendingPathComponent("books", isDirectory: true) }
     static var pagesDirectory: URL { root.appendingPathComponent("pages", isDirectory: true) }
+    static var coversDirectory: URL { root.appendingPathComponent("covers", isDirectory: true) }
 
     static func ensure(_ url: URL) {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -44,6 +45,21 @@ enum CacheManager {
 
     static func storePage(_ data: Data, for url: URL) {
         try? data.write(to: pageURL(for: url), options: .atomic)
+    }
+
+    // MARK: - Grid covers
+
+    static func coverURL(key: String) -> URL {
+        ensure(coversDirectory)
+        return coversDirectory.appendingPathComponent(hash(key) + ".jpg")
+    }
+
+    static func coverData(key: String) -> Data? {
+        try? Data(contentsOf: coverURL(key: key))
+    }
+
+    static func storeCover(_ data: Data, key: String) {
+        try? data.write(to: coverURL(key: key), options: .atomic)
     }
 
     // MARK: - Maintenance

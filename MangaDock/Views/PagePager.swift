@@ -3,9 +3,18 @@ import UIKit
 
 /// UIPageViewController wrapper. SwiftUI's TabView(.page) keeps every page view
 /// alive, which blows up memory on a 200-page chapter — this only holds ~3.
+///
+/// Taps are handled by a UITapGestureRecognizer that recognises *simultaneously*
+/// with the pager's pan gesture. Doing it with a SwiftUI overlay instead would
+/// swallow the swipe: the overlay becomes the hit-test target and the paging
+/// scroll view underneath never sees the drag.
 struct PagePager: UIViewControllerRepresentable {
     @ObservedObject var model: ReaderModel
     @Binding var index: Int
+
+    var onTapLeft: () -> Void = {}
+    var onTapCenter: () -> Void = {}
+    var onTapRight: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -20,6 +29,13 @@ struct PagePager: UIViewControllerRepresentable {
         controller.dataSource = context.coordinator
         controller.delegate = context.coordinator
         controller.view.backgroundColor = .black
+
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handleTap(_:)))
+        tap.delegate = context.coordinator
+        tap.cancelsTouchesInView = false
+        tap.requiresExclusiveTouchType = false
+        controller.view.addGestureRecognizer(tap)
 
         if model.pageCount > 0 {
             controller.setViewControllers([context.coordinator.controller(for: index)],
@@ -42,7 +58,8 @@ struct PagePager: UIViewControllerRepresentable {
                                       animated: false)
     }
 
-    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate,
+                              UIGestureRecognizerDelegate {
         var parent: PagePager
         var isAnimating = false
 
@@ -55,6 +72,28 @@ struct PagePager: UIViewControllerRepresentable {
             host.pageIndex = position
             return host
         }
+
+        // MARK: Taps
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard let view = gesture.view, view.bounds.width > 0 else { return }
+            let x = gesture.location(in: view).x
+            let width = view.bounds.width
+            if x < width * 0.33 {
+                parent.onTapLeft()
+            } else if x > width * 0.67 {
+                parent.onTapRight()
+            } else {
+                parent.onTapCenter()
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        // MARK: Paging
 
         func pageViewController(_ pageViewController: UIPageViewController,
                                 viewControllerBefore viewController: UIViewController) -> UIViewController? {

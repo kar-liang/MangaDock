@@ -72,7 +72,7 @@ struct ServerSettingsView: View {
                 }
 
                 Section("关于") {
-                    LabeledContent("版本", value: "1.0")
+                    LabeledContent("版本", value: "1.1")
                     LabeledContent("支持格式", value: "CBZ / ZIP / 图片文件夹")
                     Text("不支持 CBR（RAR）和 PDF。CBR 可以先转成 CBZ。")
                         .font(.footnote)
