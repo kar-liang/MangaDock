@@ -168,6 +168,11 @@ struct ReaderView: View {
         _ = await model.advanceChapter(direction: 1)
     }
 
+    private func goPreviousChapter() async {
+        saveProgress(page: max(0, model.index))
+        _ = await model.advanceChapter(direction: -1)
+    }
+
     // MARK: - Chrome (Liquid Glass on iOS 26)
 
     private var bars: some View {
@@ -178,9 +183,12 @@ struct ReaderView: View {
 
             Spacer()
 
-            bottomBar
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+            HStack {
+                Spacer()
+                bottomBar
+                Spacer()
+            }
+            .padding(.bottom, 10)
         }
         .transition(.opacity)
     }
@@ -235,19 +243,33 @@ struct ReaderView: View {
         return "第 \(model.index + 1) / \(model.pageCount) 页"
     }
 
+    /// Paged mode needs five controls; vertical scrolling only ever needs chapter
+    /// jumps and a way to hide the chrome. Keep the pill hugging its content.
     private var bottomBar: some View {
         HStack(spacing: 2) {
-            pagingButton("backward.end") { step(-10) }
-            pagingButton("chevron.left") { step(-1) }
-            iconButton("eye.slash") {
-                withAnimation(.easeInOut(duration: 0.15)) { showBars = false }
+            if verticalMode {
+                chapterButton("chevron.up.2", enabled: model.previousItem != nil) {
+                    Task { await goPreviousChapter() }
+                }
+                iconButton("eye.slash") { hideBars() }
+                chapterButton("chevron.down.2", enabled: model.nextItem != nil) {
+                    Task { await goNextChapter() }
+                }
+            } else {
+                pagingButton("backward.end") { step(-10) }
+                pagingButton("chevron.left") { step(-1) }
+                iconButton("eye.slash") { hideBars() }
+                pagingButton("chevron.right") { step(1) }
+                pagingButton("forward.end") { step(10) }
             }
-            pagingButton("chevron.right") { step(1) }
-            pagingButton("forward.end") { step(10) }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
-        .glassPanel(cornerRadius: 24)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .glassPanel(cornerRadius: 22)
+    }
+
+    private func hideBars() {
+        withAnimation(.easeInOut(duration: 0.15)) { showBars = false }
     }
 
     private func iconButton(_ name: String, active: Bool = false,
@@ -266,14 +288,25 @@ struct ReaderView: View {
         Button(action: action) {
             Image(systemName: name)
                 .font(.system(size: 16, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .frame(height: 34)
+                .frame(width: 44, height: 34)
                 .foregroundColor(.white)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(verticalMode)
-        .opacity(verticalMode ? 0.3 : 1)
+    }
+
+    private func chapterButton(_ name: String, enabled: Bool,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 40, height: 34)
+                .foregroundColor(.white)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.3)
     }
 
     // MARK: - Loading
