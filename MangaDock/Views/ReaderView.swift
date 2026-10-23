@@ -124,7 +124,8 @@ struct ReaderView: View {
         ScrollView {
             LazyVStack(spacing: 6) {
                 ForEach(0..<model.pageCount, id: \.self) { position in
-                    ComicPageView(model: model, index: position, onTap: toggleBars)
+                    ComicPageView(model: model, index: position,
+                                  onTap: toggleBars, stableHeight: true)
                         .frame(maxWidth: .infinity)
                 }
                 if model.nextItem != nil {

@@ -29,10 +29,17 @@ final class ReaderModel: ObservableObject {
     private var source: ComicPageSource?
     private var client: WebDAVClient?
     private let imageCache = NSCache<NSNumber, UIImage>()
+    /// Remembered width/height per page so vertical scrolling keeps stable heights
+    /// even after LazyVStack throws the page view away.
+    private var pageAspects: [Int: CGFloat] = [:]
 
     init(item: WebDAVItem) {
         currentItem = item
-        imageCache.countLimit = 6
+        imageCache.countLimit = 10
+    }
+
+    func aspect(for position: Int) -> CGFloat {
+        pageAspects[position] ?? 0.72
     }
 
     // MARK: - Derived
@@ -216,6 +223,10 @@ final class ReaderModel: ObservableObject {
             }.value
             if let decoded {
                 imageCache.setObject(decoded, forKey: key)
+                let size = decoded.size
+                if size.height > 0 {
+                    pageAspects[position] = size.width / size.height
+                }
             }
             return decoded
         } catch {

@@ -4,39 +4,28 @@ struct ComicPageView: View {
     @ObservedObject var model: ReaderModel
     let index: Int
     /// Vertical (webtoon) mode taps the page itself to toggle the chrome,
-    /// because an overlay would block scrolling. Nil in paged mode, where
-    /// PagePager's gesture recogniser handles taps.
+    /// because an overlay would block scrolling.
     var onTap: (() -> Void)? = nil
+    /// Vertical mode needs a height that doesn't change after the image arrives,
+    /// otherwise reflow above the viewport yanks the scroll offset around.
+    var stableHeight: Bool = false
 
     @State private var image: UIImage?
     @State private var failed = false
+    @State private var loadedEnhance: Bool?
 
     var body: some View {
-        ZStack {
-            Color.black
-
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if failed {
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                        .foregroundColor(.white.opacity(0.6))
-                    Text("第 \(index + 1) 页加载失败")
-                        .foregroundColor(.white.opacity(0.8))
-                    Button("重试") {
-                        Task { await load() }
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.white)
-                }
+        Group {
+            if stableHeight {
+                Color.clear
+                    .aspectRatio(model.aspect(for: index), contentMode: .fit)
+                    .overlay { pageContent }
+                    .clipped()
             } else {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(.white)
+                ZStack {
+                    Color.black
+                    pageContent
+                }
             }
         }
         .contentShape(Rectangle())
@@ -44,9 +33,39 @@ struct ComicPageView: View {
             onTap?()
         }
         .task(id: "\(index)-\(model.enhance)") {
-            image = nil
-            failed = false
+            // Only drop the decoded image when the enhance setting actually flipped.
+            if let loadedEnhance, loadedEnhance != model.enhance {
+                image = nil
+            }
+            loadedEnhance = model.enhance
             await load()
+        }
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        if let image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if failed {
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.largeTitle)
+                    .foregroundColor(.white.opacity(0.6))
+                Text("第 \(index + 1) 页加载失败")
+                    .foregroundColor(.white.opacity(0.8))
+                Button("重试") {
+                    Task { await load() }
+                }
+                .buttonStyle(.bordered)
+                .tint(.white)
+            }
+        } else {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .tint(.white)
         }
     }
 
