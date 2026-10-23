@@ -9,9 +9,12 @@ enum CoverBuilder {
 
     static func make(for item: WebDAVItem, client: WebDAVClient) async -> UIImage? {
         if item.isImage {
-            let data = CacheManager.pageData(for: item.url) ?? (try? await client.data(for: item.url))
+            var data = CacheManager.pageData(for: item.url)
+            if data == nil {
+                data = try? await client.data(for: item.url)
+            }
             guard let data else { return nil }
-            return decode(data)
+            return await decode(data)
         }
 
         if item.isArchive {
@@ -34,7 +37,7 @@ enum CoverBuilder {
             guard let children = try? await client.list(item.requestURL) else { return nil }
             if let firstImage = children.first(where: { !$0.isDirectory && $0.isImage }) {
                 guard let data = try? await client.data(for: firstImage.url) else { return nil }
-                return decode(data)
+                return await decode(data)
             }
             if let firstArchive = children.first(where: { !$0.isDirectory && $0.isArchive }) {
                 return await make(for: firstArchive, client: client)
