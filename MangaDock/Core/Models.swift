@@ -61,7 +61,11 @@ enum ComicFileTypes {
 }
 
 enum NavTarget: Hashable {
+    /// Raw directory browsing (文件 tab).
     case folder(WebDAVItem)
+    /// A shelf series: opening it shows the chapter list.
+    case series(WebDAVItem)
+    /// Straight into the reader.
     case comic(WebDAVItem)
 }
 

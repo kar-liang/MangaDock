@@ -9,7 +9,10 @@ struct RootTabView: View {
     var body: some View {
         TabView {
             Tab("书架", systemImage: "books.vertical.fill") {
-                HomeView()
+                ShelfView()
+            }
+            Tab("文件", systemImage: "folder.fill") {
+                FilesView()
             }
             Tab("记录", systemImage: "clock.fill") {
                 HistoryView()

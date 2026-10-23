@@ -108,6 +108,7 @@ struct BrowserView: View {
             NavigationLink(value: target) {
                 ItemRow(item: item)
             }
+            .contextMenu { ShelfMenu(item: item) }
         } else {
             ItemRow(item: item).opacity(0.55)
         }
@@ -117,7 +118,7 @@ struct BrowserView: View {
     private func gridCell(for item: WebDAVItem) -> some View {
         if let target = ItemTile.target(for: item) {
             NavigationLink(value: target) {
-                CoverTile(item: item)
+                CoverTile(item: item, shelfAction: .toggle)
             }
             .buttonStyle(.plain)
         } else {

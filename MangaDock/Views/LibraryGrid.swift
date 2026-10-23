@@ -2,11 +2,17 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+enum CoverShelfAction: Equatable {
+    case none
+    case toggle
+}
+
 /// Image-only cover box (2:3). Used by the grid and by list rows.
 /// Long-press to swap in your own cover from the photo library.
 struct CoverBox: View {
     let item: WebDAVItem
     var width: CGFloat? = nil
+    var shelfAction: CoverShelfAction = .none
 
     @EnvironmentObject private var store: AppStore
     @State private var image: UIImage?
@@ -48,6 +54,10 @@ struct CoverBox: View {
 
     @ViewBuilder
     private var coverMenu: some View {
+        if shelfAction == .toggle {
+            ShelfMenu(item: item)
+        }
+
         Button {
             showPhotoPicker = true
         } label: {
@@ -124,10 +134,11 @@ struct CoverBox: View {
 /// Grid cell: cover + title underneath.
 struct CoverTile: View {
     let item: WebDAVItem
+    var shelfAction: CoverShelfAction = .none
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            CoverBox(item: item)
+            CoverBox(item: item, shelfAction: shelfAction)
             Text(item.displayName)
                 .font(.caption)
                 .lineLimit(2)

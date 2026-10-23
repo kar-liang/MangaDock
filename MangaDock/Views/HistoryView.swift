@@ -55,6 +55,8 @@ struct HistoryView: View {
                 switch target {
                 case .folder(let item):
                     BrowserView(folder: item)
+                case .series(let item):
+                    SeriesView(folder: item)
                 case .comic(let item):
                     ReaderView(item: item)
                 }

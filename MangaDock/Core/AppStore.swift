@@ -86,6 +86,10 @@ final class AppStore: ObservableObject {
         recent.first(where: { $0.urlString == url.absoluteString })?.page ?? 0
     }
 
+    func recentEntry(for url: URL) -> RecentEntry? {
+        recent.first(where: { $0.urlString == url.absoluteString })
+    }
+
     func recordPage(url: URL, name: String, page: Int, pageCount: Int, isFolder: Bool = false) {
         guard pageCount > 0 else { return }
         var list = recent.filter { $0.urlString != url.absoluteString }

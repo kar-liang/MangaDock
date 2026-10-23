@@ -56,6 +56,45 @@ enum ItemTile {
     }
 }
 
+/// Context-menu entry that adds/removes an item from the bookshelf.
+struct ShelfMenu: View {
+    let item: WebDAVItem
+
+    private var onShelf: Bool {
+        ShelfStore.shared.contains(item)
+    }
+
+    var body: some View {
+        Button {
+            ShelfStore.shared.toggle(item)
+        } label: {
+            Label(onShelf ? "移出书架" : "加入书架",
+                  systemImage: onShelf ? "minus.circle" : "plus.circle")
+        }
+    }
+}
+
+struct LibraryNavigationModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content.navigationDestination(for: NavTarget.self) { target in
+            switch target {
+            case .folder(let item):
+                BrowserView(folder: item)
+            case .series(let item):
+                SeriesView(folder: item)
+            case .comic(let item):
+                ReaderView(item: item)
+            }
+        }
+    }
+}
+
+extension View {
+    func libraryNavigation() -> some View {
+        modifier(LibraryNavigationModifier())
+    }
+}
+
 struct ErrorStateView: View {
     let message: String
     let retry: () -> Void
