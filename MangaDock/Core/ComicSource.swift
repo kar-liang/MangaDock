@@ -16,7 +16,7 @@ final class ZipComicSource: ComicPageSource {
         let archive = try ZipArchive(fileURL: fileURL)
         self.archive = archive
         self.pages = archive.entries
-            .filter { ComicPageSource.isPageFile($0.name) }
+            .filter { PageFiles.isPageFile($0.name) }
             .sorted { NaturalSort.less($0.name, $1.name) }
         self.pageCount = pages.count
         if pageCount == 0 {

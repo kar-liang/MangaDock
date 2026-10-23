@@ -23,7 +23,7 @@ enum ImageDecoder {
     }
 }
 
-enum ComicPageSource {
+enum PageFiles {
     static func isPageFile(_ name: String) -> Bool {
         let ext = (name as NSString).pathExtension.lowercased()
         return ComicFileTypes.imageExtensions.contains(ext)
