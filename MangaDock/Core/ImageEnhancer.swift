@@ -325,11 +325,10 @@ private final class MetalEnhancer {
         // Flatten any alpha onto white so transparency does not read as black ink.
         context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
         context.fill(bounds)
-        // Flip so buffer row 0 is the top of the page, matching both CGImage and the
-        // framebuffer's first row.
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: 1, y: -1)
         context.interpolationQuality = .high
+        // No flip. A CGBitmapContext stores row 0 at the visual top even though its
+        // coordinate origin sits at the bottom left, so a plain draw already lands the
+        // right way up. Flipping here turned every page upside down on device.
         context.draw(image, in: bounds)
 
         return Upload(buffer: buffer, stride: stride)
