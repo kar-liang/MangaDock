@@ -14,14 +14,26 @@ struct MangaDockApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
+    @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
+
+    private var scheme: ColorScheme? {
+        switch AppearanceMode(rawValue: appearanceRaw) ?? .system {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
 
     var body: some View {
-        if store.isConfigured {
-            RootTabView()
-        } else {
-            NavigationStack {
-                ServerSettingsView(initialSetup: true)
+        Group {
+            if store.isConfigured {
+                RootTabView()
+            } else {
+                NavigationStack {
+                    ServerSettingsView(initialSetup: true)
+                }
             }
         }
+        .preferredColorScheme(scheme)
     }
 }

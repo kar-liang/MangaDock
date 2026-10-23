@@ -14,6 +14,8 @@ struct ServerSettingsView: View {
     @State private var cacheSize = ""
     @State private var loaded = false
     @AppStorage("mangadock.enhance") private var enhanceDefault = false
+    @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
+    @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
 
     var body: some View {
         Form {
@@ -53,6 +55,22 @@ struct ServerSettingsView: View {
 
             if !initialSetup {
                 Section {
+                    Picker("外观", selection: $appearanceRaw) {
+                        ForEach(AppearanceMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
+                    Picker("新目录默认视图", selection: $defaultLayoutRaw) {
+                        Text("网格").tag(LayoutMode.grid.rawValue)
+                        Text("列表").tag(LayoutMode.list.rawValue)
+                    }
+                } header: {
+                    Text("显示")
+                } footer: {
+                    Text("每个目录的列表/网格是分开记的：书架设成网格，二级目录设成列表，互不影响。这里只决定第一次进入某个目录时用哪种。")
+                }
+
+                Section {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("当前引擎").font(.subheadline)
                         Text(ImageEnhancer.engineDescription)
@@ -87,7 +105,7 @@ struct ServerSettingsView: View {
                 }
 
                 Section("关于") {
-                    LabeledContent("版本", value: "1.2")
+                    LabeledContent("版本", value: "1.3")
                     LabeledContent("支持格式", value: "CBZ / ZIP / 图片文件夹")
                     Text("不支持 CBR（RAR）和 PDF。CBR 可以先转成 CBZ。")
                         .font(.footnote)

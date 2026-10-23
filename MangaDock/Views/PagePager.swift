@@ -1,6 +1,10 @@
 import SwiftUI
 import UIKit
 
+protocol PagerPage: AnyObject {
+    var pageIndex: Int { get set }
+}
+
 /// UIPageViewController wrapper. SwiftUI's TabView(.page) keeps every page view
 /// alive, which blows up memory on a 200-page chapter — this only holds ~3.
 ///
@@ -37,7 +41,7 @@ struct PagePager: UIViewControllerRepresentable {
         tap.requiresExclusiveTouchType = false
         controller.view.addGestureRecognizer(tap)
 
-        if model.pageCount > 0 {
+        if model.displayPageCount > 0 {
             controller.setViewControllers([context.coordinator.controller(for: index)],
                                           direction: .forward,
                                           animated: false)
@@ -47,9 +51,9 @@ struct PagePager: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIPageViewController, context: Context) {
         context.coordinator.parent = self
-        guard model.pageCount > 0, !context.coordinator.isAnimating else { return }
+        guard model.displayPageCount > 0, !context.coordinator.isAnimating else { return }
 
-        if let current = controller.viewControllers?.first as? ComicPageHost,
+        if let current = controller.viewControllers?.first as? PagerPage,
            current.pageIndex == index {
             return
         }
@@ -67,8 +71,13 @@ struct PagePager: UIViewControllerRepresentable {
             self.parent = parent
         }
 
-        func controller(for position: Int) -> ComicPageHost {
-            let host = ComicPageHost(rootView: ComicPageView(model: parent.model, index: position))
+        func controller(for position: Int) -> UIViewController {
+            if position < parent.model.pageCount {
+                let host = ComicPageHost(rootView: ComicPageView(model: parent.model, index: position))
+                host.pageIndex = position
+                return host
+            }
+            let host = ChapterEndHost(rootView: ChapterEndView(model: parent.model))
             host.pageIndex = position
             return host
         }
@@ -97,17 +106,16 @@ struct PagePager: UIViewControllerRepresentable {
 
         func pageViewController(_ pageViewController: UIPageViewController,
                                 viewControllerBefore viewController: UIViewController) -> UIViewController? {
-            guard let host = viewController as? ComicPageHost,
-                  host.pageIndex > 0,
-                  host.pageIndex < parent.model.pageCount else { return nil }
-            return controller(for: host.pageIndex - 1)
+            guard let page = viewController as? PagerPage,
+                  page.pageIndex > 0 else { return nil }
+            return controller(for: page.pageIndex - 1)
         }
 
         func pageViewController(_ pageViewController: UIPageViewController,
                                 viewControllerAfter viewController: UIViewController) -> UIViewController? {
-            guard let host = viewController as? ComicPageHost,
-                  host.pageIndex + 1 < parent.model.pageCount else { return nil }
-            return controller(for: host.pageIndex + 1)
+            guard let page = viewController as? PagerPage,
+                  page.pageIndex + 1 < parent.model.displayPageCount else { return nil }
+            return controller(for: page.pageIndex + 1)
         }
 
         func pageViewController(_ pageViewController: UIPageViewController,
@@ -121,12 +129,16 @@ struct PagePager: UIViewControllerRepresentable {
                                 transitionCompleted completed: Bool) {
             isAnimating = false
             guard completed,
-                  let host = pageViewController.viewControllers?.first as? ComicPageHost else { return }
-            parent.index = host.pageIndex
+                  let page = pageViewController.viewControllers?.first as? PagerPage else { return }
+            parent.index = page.pageIndex
         }
     }
 }
 
-final class ComicPageHost: UIHostingController<ComicPageView> {
+final class ComicPageHost: UIHostingController<ComicPageView>, PagerPage {
+    var pageIndex: Int = 0
+}
+
+final class ChapterEndHost: UIHostingController<ChapterEndView>, PagerPage {
     var pageIndex: Int = 0
 }

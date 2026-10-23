@@ -5,12 +5,14 @@ struct HomeView: View {
     @EnvironmentObject private var store: AppStore
 
     @StateObject private var loader = FolderLoader()
-    @AppStorage("mangadock.useGrid") private var useGrid = false
+    @State private var mode: LayoutMode = .grid
+
+    private var folderKey: String { store.baseURL?.absoluteString ?? "root" }
 
     var body: some View {
         NavigationStack {
             Group {
-                if useGrid { gridContent } else { listContent }
+                if mode == .grid { gridContent } else { listContent }
             }
             .navigationTitle("书架")
             .toolbar {
@@ -23,9 +25,10 @@ struct HomeView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        useGrid.toggle()
+                        mode = (mode == .grid ? .list : .grid)
+                        LayoutPreference.shared.setMode(mode, for: folderKey)
                     } label: {
-                        Image(systemName: useGrid ? "list.bullet" : "square.grid.2x2")
+                        Image(systemName: mode == .grid ? "list.bullet" : "square.grid.2x2")
                     }
                 }
             }
@@ -38,6 +41,7 @@ struct HomeView: View {
                 }
             }
             .task { await reload() }
+            .onAppear { mode = LayoutPreference.shared.mode(for: folderKey) }
         }
     }
 

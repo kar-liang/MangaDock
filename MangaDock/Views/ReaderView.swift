@@ -1,17 +1,14 @@
 import SwiftUI
 
 struct ReaderView: View {
-    let item: WebDAVItem
-
-    @EnvironmentObject private var store: AppStore
     @StateObject private var model: ReaderModel
+    @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var showBars = true
     @State private var verticalMode = false
 
     init(item: WebDAVItem) {
-        self.item = item
         _model = StateObject(wrappedValue: ReaderModel(item: item))
     }
 
@@ -28,6 +25,9 @@ struct ReaderView: View {
                 bars
             }
         }
+        // A comic reader stays dark no matter the app theme — glass and text here
+        // must not follow a light color scheme.
+        .environment(\.colorScheme, .dark)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
@@ -35,11 +35,11 @@ struct ReaderView: View {
         .task { await reload() }
         .onChange(of: model.index) { newValue in
             guard model.pageCount > 0 else { return }
-            saveProgress(page: newValue)
+            saveProgress(page: min(newValue, model.pageCount - 1))
         }
         .onDisappear {
             guard model.pageCount > 0 else { return }
-            saveProgress(page: model.index)
+            saveProgress(page: min(model.index, model.pageCount - 1))
         }
     }
 
@@ -116,6 +116,10 @@ struct ReaderView: View {
                     ComicPageView(model: model, index: position, onTap: toggleBars)
                         .frame(maxWidth: .infinity)
                 }
+                if model.nextItem != nil {
+                    ChapterEndView(model: model)
+                        .frame(minHeight: 300)
+                }
             }
             .padding(.vertical, 6)
         }
@@ -127,11 +131,11 @@ struct ReaderView: View {
     /// While the chrome is hidden, *any* tap brings it back — you can never get
     /// stuck with an invisible toolbar.
     private func handleTapLeft() {
-        if showBars { model.step(-1) } else { revealBars() }
+        if showBars { step(-1) } else { revealBars() }
     }
 
     private func handleTapRight() {
-        if showBars { model.step(1) } else { revealBars() }
+        if showBars { step(1) } else { revealBars() }
     }
 
     private func toggleBars() {
@@ -140,6 +144,17 @@ struct ReaderView: View {
 
     private func revealBars() {
         withAnimation(.easeInOut(duration: 0.15)) { showBars = true }
+    }
+
+    private func step(_ delta: Int) {
+        if model.step(delta) == .loadNextChapter {
+            Task { await goNextChapter() }
+        }
+    }
+
+    private func goNextChapter() async {
+        saveProgress(page: max(0, model.pageCount - 1))
+        _ = await model.advanceChapter(direction: 1)
     }
 
     // MARK: - Chrome (Liquid Glass on iOS 26)
@@ -164,14 +179,19 @@ struct ReaderView: View {
             iconButton("chevron.left") { dismiss() }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.name)
+                Text(model.currentItem.name)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text(verticalMode
-                         ? "共 \(model.pageCount) 页"
-                         : "第 \(model.index + 1) / \(model.pageCount) 页")
+                    Text(pageLabel)
                         .font(.caption2)
+                    if !model.chapterLabel.isEmpty {
+                        Text(model.chapterLabel)
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.white.opacity(0.18), in: Capsule())
+                    }
                     if model.enhance {
                         Text("增强")
                             .font(.system(size: 9, weight: .bold))
@@ -181,7 +201,7 @@ struct ReaderView: View {
                             .background(Color.orange, in: Capsule())
                     }
                 }
-                .foregroundColor(.secondary)
+                .foregroundColor(.white.opacity(0.65))
             }
 
             Spacer(minLength: 4)
@@ -194,15 +214,25 @@ struct ReaderView: View {
         .glassPanel(cornerRadius: 22)
     }
 
+    private var pageLabel: String {
+        if verticalMode {
+            return "共 \(model.pageCount) 页"
+        }
+        if model.isOnChapterEndCard {
+            return "本话看完"
+        }
+        return "第 \(model.index + 1) / \(model.pageCount) 页"
+    }
+
     private var bottomBar: some View {
         HStack(spacing: 2) {
-            pagingButton("gobackward.10") { model.step(-10) }
-            pagingButton("chevron.left") { model.step(-1) }
+            pagingButton("backward.end") { step(-10) }
+            pagingButton("chevron.left") { step(-1) }
             iconButton("eye.slash") {
                 withAnimation(.easeInOut(duration: 0.15)) { showBars = false }
             }
-            pagingButton("chevron.right") { model.step(1) }
-            pagingButton("goforward.10") { model.step(10) }
+            pagingButton("chevron.right") { step(1) }
+            pagingButton("forward.end") { step(10) }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
@@ -215,7 +245,7 @@ struct ReaderView: View {
             Image(systemName: name)
                 .font(.system(size: 15, weight: .semibold))
                 .frame(width: 36, height: 34)
-                .foregroundColor(active ? .orange : .primary)
+                .foregroundColor(active ? .orange : .white)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -227,7 +257,7 @@ struct ReaderView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .frame(maxWidth: .infinity)
                 .frame(height: 34)
-                .foregroundColor(.primary)
+                .foregroundColor(.white)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -243,14 +273,14 @@ struct ReaderView: View {
             model.isLoading = false
             return
         }
-        await model.load(client: client, startPage: store.recentPage(for: item.url))
+        await model.start(client: client, startPage: store.recentPage(for: model.currentItem.url))
     }
 
     private func saveProgress(page: Int) {
-        store.recordPage(url: item.url,
-                         name: item.name,
+        store.recordPage(url: model.currentItem.url,
+                         name: model.currentItem.name,
                          page: page,
                          pageCount: model.pageCount,
-                         isFolder: item.isDirectory)
+                         isFolder: model.currentItem.isDirectory)
     }
 }
