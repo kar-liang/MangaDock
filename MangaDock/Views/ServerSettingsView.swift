@@ -105,7 +105,7 @@ struct ServerSettingsView: View {
                 }
 
                 Section("关于") {
-                    LabeledContent("版本", value: "1.3")
+                    LabeledContent("版本", value: Self.appVersion)
                     LabeledContent("支持格式", value: "CBZ / ZIP / 图片文件夹")
                     Text("不支持 CBR（RAR）和 PDF。CBR 可以先转成 CBZ。")
                         .font(.footnote)
@@ -129,6 +129,14 @@ struct ServerSettingsView: View {
 
     private func refreshCacheSize() {
         cacheSize = CacheManager.formattedSize()
+    }
+
+    /// Read straight from the bundle so the label can never desync from the build.
+    private static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "-"
+        let build = info?["CFBundleVersion"] as? String ?? "-"
+        return "\(version) (\(build))"
     }
 
     private func testAndSave() async {
