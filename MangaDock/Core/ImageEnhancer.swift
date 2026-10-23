@@ -1,7 +1,9 @@
 import SwiftUI
 import UIKit
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import CoreML
+import Vision
 import Metal
 
 /// Local image enhancement for low-resolution scans.
@@ -228,7 +230,7 @@ private final class MetalEnhancer {
         ciContext.render(
             CIImage(cgImage: source),
             to: srcTexture,
-            bounds: CGRect(x: 0, y: 0, width: srcW, height: srcH),
+            bounds: CGRect(x: 0, y: 0, width: CGFloat(srcW), height: CGFloat(srcH)),
             colorSpace: colorSpace
         )
 
@@ -371,11 +373,11 @@ private final class MetalEnhancer {
 
 /// Runs a drop-in Core ML super-resolution model.
 ///
-/// The model is probed instead of hard-coded: the first image-typed input gets the
-/// page, the first image-typed output comes back. That way whatever waifu2x /
-/// Real-ESRGAN conversion gets dropped in works without binding to one exporter's
-/// tensor names. Models that only expose multi-array tensors are ignored and the
-/// Metal path takes over.
+/// Goes through Vision rather than `MLModel.prediction` directly: Vision handles the
+/// colour-space conversion, the resize into whatever the model expects, and the tensor
+/// naming, so a waifu2x / Real-ESRGAN export works without us guessing an input key.
+/// If the model only exposes multi-array tensors, Vision throws and the Metal path
+/// takes over — same behaviour as having no model at all.
 enum CoreMLSuperResolution {
 
     static func upscale(_ cgImage: CGImage, modelURL: URL) -> CGImage? {
@@ -384,84 +386,33 @@ enum CoreMLSuperResolution {
         // on ANE versus seconds on CPU.
         configuration.computeUnits = .all
 
-        guard let model = try? MLModel(contentsOf: modelURL, configuration: configuration) else {
+        guard let model = try? MLModel(contentsOf: modelURL, configuration: configuration),
+              let visionModel = try? VNCoreMLModel(for: model) else {
             return nil
         }
 
-        let description = model.modelDescription
-        guard let inputName = firstImageKey(in: description.inputDescriptionsByName),
-              let outputName = firstImageKey(in: description.outputDescriptionsByName) else {
+        let request = VNCoreMLRequest(model: visionModel)
+        request.imageCropAndScaleOption = .scaleFill
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
             return nil
         }
 
-        guard let buffer = pixelBuffer(from: cgImage) else { return nil }
-
-        let input = try? MLDictionaryFeatureProvider(dictionary: [
-            inputName: MLFeatureValue(pixelBuffer: buffer)
-        ])
-        guard let input else { return nil }
-
-        guard let result = try? model.prediction(from: input),
-              let output = result.featureValue(for: outputName)?.imageValue else {
+        guard let observation = request.results?.first as? VNPixelBufferObservation else {
             return nil
         }
 
-        let width = CVPixelBufferGetWidth(output)
-        let height = CVPixelBufferGetHeight(output)
+        let buffer = observation.pixelBuffer
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
         guard width > 0, height > 0 else { return nil }
         // A 4× model can overshoot the memory budget; refuse rather than blow up.
         guard CGFloat(width) <= ImageEnhancer.maxOutputPixel * 2 else { return nil }
 
-        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-        return CIContext().createCGImage(CIImage(cvPixelBuffer: output), from: bounds)
-    }
-
-    private static func firstImageKey(in descriptions: [String: MLFeatureDescription]) -> String? {
-        for (name, feature) in descriptions where feature.type == .image {
-            return name
-        }
-        return nil
-    }
-
-    private static func pixelBuffer(from cgImage: CGImage) -> CVPixelBuffer? {
-        let width = cgImage.width
-        let height = cgImage.height
-        guard width > 0, height > 0 else { return nil }
-
-        var buffer: CVPixelBuffer?
-        let attributes: [String: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-            kCVPixelBufferMetalCompatibilityKey as String: true
-        ]
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            attributes as CFDictionary,
-            &buffer
-        )
-        guard status == kCVReturnSuccess, let buffer else { return nil }
-
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-
-        guard let base = CVPixelBufferGetBaseAddress(buffer),
-              let context = CGContext(
-                data: base,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-                    | CGBitmapInfo.byteOrder32Little.rawValue
-              ) else {
-            return nil
-        }
-
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return buffer
+        let bounds = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        return CIContext().createCGImage(CIImage(cvPixelBuffer: buffer), from: bounds)
     }
 }
