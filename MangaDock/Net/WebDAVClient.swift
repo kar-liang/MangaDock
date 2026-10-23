@@ -154,6 +154,7 @@ final class WebDAVClient: @unchecked Sendable {
         var text = href.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         text = text.replacingOccurrences(of: " ", with: "%20")
+        text = Self.percentSanitized(text)
 
         if text.lowercased().hasPrefix("http://") || text.lowercased().hasPrefix("https://") {
             return URL(string: text)
@@ -166,6 +167,23 @@ final class WebDAVClient: @unchecked Sendable {
         components.fragment = nil
         guard let origin = components.url else { return nil }
         return URL(string: text, relativeTo: origin)?.absoluteURL
+    }
+
+    /// Some servers (Alist with certain settings, older nginx dav) return raw
+    /// UTF-8 Chinese in <href>. URL(string:) then fails and the whole folder
+    /// looks empty, so percent-encode non-ASCII while leaving "%" alone.
+    private static func percentSanitized(_ text: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.insert(charactersIn: ":/?#[]@!$&'()*+,;=%~")
+        var output = ""
+        for scalar in text.unicodeScalars {
+            if allowed.contains(scalar) {
+                output.unicodeScalars.append(scalar)
+            } else if let encoded = String(scalar).addingPercentEncoding(withAllowedCharacters: allowed) {
+                output += encoded
+            }
+        }
+        return output
     }
 
     private static func normalizedPath(_ url: URL) -> String {
