@@ -1,0 +1,115 @@
+import Foundation
+import SwiftUI
+
+@MainActor
+final class AppStore: ObservableObject {
+    private let defaults = UserDefaults.standard
+
+    private enum Keys {
+        static let serverURL = "mangadock.serverURL"
+        static let username = "mangadock.username"
+        static let recent = "mangadock.recent"
+    }
+
+    @Published var serverURL: String
+    @Published var username: String
+    @Published var password: String
+    @Published var recent: [RecentEntry]
+
+    init() {
+        serverURL = defaults.string(forKey: Keys.serverURL) ?? ""
+        username = defaults.string(forKey: Keys.username) ?? ""
+        password = Keychain.load(account: "webdav") ?? ""
+        if let data = defaults.data(forKey: Keys.recent),
+           let list = try? JSONDecoder().decode([RecentEntry].self, from: data) {
+            recent = list
+        } else {
+            recent = []
+        }
+    }
+
+    // MARK: - Derived
+
+    var baseURL: URL? {
+        let trimmed = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var text = trimmed
+        let lower = text.lowercased()
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
+            text = "http://" + text
+        }
+        while text.hasSuffix("/") && text.count > "http://".count + 1 {
+            text.removeLast()
+        }
+        return URL(string: text)
+    }
+
+    var isConfigured: Bool {
+        baseURL != nil
+    }
+
+    var baseTitle: String {
+        guard let url = baseURL else { return "漫画坞" }
+        let last = url.lastPathComponent
+        return last.isEmpty ? (url.host ?? "漫画坞") : last
+    }
+
+    var baseItem: WebDAVItem? {
+        guard let url = baseURL else { return nil }
+        let name = url.lastPathComponent.isEmpty ? (url.host ?? "根目录") : url.lastPathComponent
+        return WebDAVItem.make(url: WebDAVItem.directoryURL(url), name: name, isDirectory: true)
+    }
+
+    func makeClient() -> WebDAVClient? {
+        guard let base = baseURL else { return nil }
+        return WebDAVClient(username: username, password: password, baseURL: base)
+    }
+
+    // MARK: - Mutations
+
+    func save(serverURL: String, username: String, password: String) {
+        var cleaned = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while cleaned.hasSuffix("/") && cleaned.count > 8 {
+            cleaned.removeLast()
+        }
+        self.serverURL = cleaned
+        self.username = username
+        self.password = password
+        defaults.set(cleaned, forKey: Keys.serverURL)
+        defaults.set(username, forKey: Keys.username)
+        Keychain.save(password, account: "webdav")
+    }
+
+    // MARK: - Reading progress
+
+    func recentPage(for url: URL) -> Int {
+        recent.first(where: { $0.urlString == url.absoluteString })?.page ?? 0
+    }
+
+    func recordPage(url: URL, name: String, page: Int, pageCount: Int) {
+        guard pageCount > 0 else { return }
+        var list = recent.filter { $0.urlString != url.absoluteString }
+        list.insert(
+            RecentEntry(urlString: url.absoluteString, name: name, page: page,
+                        pageCount: pageCount, updatedAt: Date()),
+            at: 0
+        )
+        if list.count > 30 { list = Array(list.prefix(30)) }
+        recent = list
+        if let data = try? JSONEncoder().encode(list) {
+            defaults.set(data, forKey: Keys.recent)
+        }
+    }
+
+    func removeRecent(_ entry: RecentEntry) {
+        recent = recent.filter { $0.urlString != entry.urlString }
+        if let data = try? JSONEncoder().encode(recent) {
+            defaults.set(data, forKey: Keys.recent)
+        }
+    }
+
+    func clearRecent() {
+        recent = []
+        defaults.removeObject(forKey: Keys.recent)
+    }
+}

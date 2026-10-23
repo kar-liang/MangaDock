@@ -1,0 +1,69 @@
+name: MangaDock
+options:
+  bundleIdPrefix: com.karliang
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  MangaDock:
+    type: application
+    platform: iOS
+    sources:
+      - path: MangaDock
+    settings:
+      base:
+        PRODUCT_NAME: MangaDock
+        PRODUCT_BUNDLE_IDENTIFIER: com.karliang.mangadock
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: Support/Info.plist
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: 漫画坞
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: 漫画坞需要访问局域网中的 WebDAV 服务器来读取你的漫画文件。
+        NSPhotoLibraryAddUsageDescription: 用于保存你从漫画里分享的页面。
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+
+schemes:
+  MangaDock:
+    build:
+      targets:
+        MangaDock: all
+    run:
+      config: Debug
+    archive:
+      config: Release
