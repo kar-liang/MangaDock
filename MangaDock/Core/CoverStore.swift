@@ -33,6 +33,17 @@ enum CoverBuilder {
             return await RemoteZip.cover(for: item.url, client: client, maxPixel: maxPixel)
         }
 
+        if item.isPDF {
+            // No byte-range trick for PDF — only a locally cached copy can be rendered.
+            guard CacheManager.hasArchive(for: item.url) else { return nil }
+            let local = CacheManager.archiveURL(for: item.url)
+            return await Task.detached(priority: .utility) { () -> UIImage? in
+                guard let source = try? PDFComicSource(fileURL: local),
+                      let data = try? await source.pageData(at: 0) else { return nil }
+                return ImageDecoder.downsample(data, maxPixelSize: CoverBuilder.maxPixel)
+            }.value
+        }
+
         if item.isDirectory {
             guard let children = try? await client.list(item.requestURL) else { return nil }
             if let firstImage = children.first(where: { !$0.isDirectory && $0.isImage }) {
@@ -88,5 +99,51 @@ final class CoverStore {
 
     func clearMemory() {
         images.removeAll()
+    }
+
+    // MARK: - Custom covers
+
+    func hasCustomCover(for item: WebDAVItem) -> Bool {
+        CacheManager.hasManualCover(key: item.id)
+    }
+
+    @discardableResult
+    func setCustomCover(_ image: UIImage, for item: WebDAVItem) -> UIImage? {
+        guard let prepared = Self.normalized(image),
+              let data = prepared.jpegData(compressionQuality: 0.86) else { return nil }
+        CacheManager.storeCover(data, key: item.id)
+        CacheManager.markManualCover(key: item.id)
+        images[item.id] = prepared
+        return prepared
+    }
+
+    func removeCustomCover(for item: WebDAVItem) {
+        CacheManager.deleteCover(key: item.id)
+        images[item.id] = nil
+    }
+
+    /// Center-crop to 2:3 and shrink to 600×900 so every card lines up.
+    private static func normalized(_ image: UIImage) -> UIImage? {
+        guard let cg = image.cgImage else { return nil }
+        let width = CGFloat(cg.width)
+        let height = CGFloat(cg.height)
+        guard width > 0, height > 0 else { return nil }
+
+        let target: CGFloat = 2.0 / 3.0
+        let rect: CGRect
+        if width / height > target {
+            let newWidth = height * target
+            rect = CGRect(x: (width - newWidth) / 2, y: 0, width: newWidth, height: height)
+        } else {
+            let newHeight = width / target
+            rect = CGRect(x: 0, y: (height - newHeight) / 2, width: width, height: newHeight)
+        }
+        guard let cropped = cg.cropping(to: rect) else { return nil }
+
+        let canvas = CGSize(width: 600, height: 900)
+        let source = UIImage(cgImage: cropped)
+        return UIGraphicsImageRenderer(size: canvas).image { _ in
+            source.draw(in: CGRect(origin: .zero, size: canvas))
+        }
     }
 }

@@ -96,7 +96,9 @@ final class ReaderModel: ObservableObject {
         }
 
         let wantsFolders = currentItem.isDirectory
-        var candidates = children.filter { wantsFolders ? $0.isDirectory : $0.isArchive }
+        var candidates = children.filter {
+            wantsFolders ? $0.isDirectory : ($0.isArchive || $0.isPDF)
+        }
 
         if !candidates.contains(where: { $0.id == currentItem.id }) {
             candidates.append(currentItem)
@@ -108,22 +110,24 @@ final class ReaderModel: ObservableObject {
     }
 
     private func prepare(item: WebDAVItem, client: WebDAVClient) async throws -> ComicPageSource {
-        if item.isArchive {
+        if item.isArchive || item.isPDF {
             let cacheURL = CacheManager.archiveURL(for: item.url)
             if !CacheManager.hasArchive(for: item.url) {
-                statusText = "正在下载 \(item.name)…"
+                statusText = "正在下载 \(item.displayName)…"
                 try await client.download(item.url, to: cacheURL) { [weak self] value in
                     Task { @MainActor [weak self] in
                         self?.downloadProgress = value
                     }
                 }
             }
-            statusText = "正在解压目录…"
+            statusText = item.isPDF ? "正在解析 PDF…" : "正在解压目录…"
             downloadProgress = nil
             let url = cacheURL
+            let isPDF = item.isPDF
             do {
-                return try await Task.detached(priority: .userInitiated) {
-                    try ZipComicSource(fileURL: url)
+                return try await Task.detached(priority: .userInitiated) { () -> ComicPageSource in
+                    if isPDF { return try PDFComicSource(fileURL: url) }
+                    return try ZipComicSource(fileURL: url)
                 }.value
             } catch {
                 CacheManager.removeArchive(for: item.url)

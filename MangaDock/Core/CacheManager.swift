@@ -62,6 +62,25 @@ enum CacheManager {
         try? data.write(to: coverURL(key: key), options: .atomic)
     }
 
+    /// Marks the cover as user-chosen so we don't silently regenerate it.
+    static func manualCoverMarker(key: String) -> URL {
+        ensure(coversDirectory)
+        return coversDirectory.appendingPathComponent(hash(key) + ".manual")
+    }
+
+    static func hasManualCover(key: String) -> Bool {
+        FileManager.default.fileExists(atPath: manualCoverMarker(key: key).path)
+    }
+
+    static func markManualCover(key: String) {
+        try? Data().write(to: manualCoverMarker(key: key))
+    }
+
+    static func deleteCover(key: String) {
+        try? FileManager.default.removeItem(at: coverURL(key: key))
+        try? FileManager.default.removeItem(at: manualCoverMarker(key: key))
+    }
+
     // MARK: - Maintenance
 
     static func sizeOnDisk() -> Int64 {

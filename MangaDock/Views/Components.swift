@@ -11,7 +11,7 @@ struct ItemRow: View {
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
+                Text(item.displayName)
                     .lineLimit(1)
                 if !item.isDirectory {
                     Text(sizeText)
@@ -27,6 +27,7 @@ struct ItemRow: View {
     private var iconName: String {
         if item.isDirectory { return "folder.fill" }
         if item.isArchive { return "book.closed.fill" }
+        if item.isPDF { return "doc.richtext.fill" }
         if item.isImage { return "photo" }
         return "doc"
     }
@@ -34,6 +35,7 @@ struct ItemRow: View {
     private var iconColor: Color {
         if item.isDirectory { return .accentColor }
         if item.isArchive { return .orange }
+        if item.isPDF { return .red }
         return .secondary
     }
 
@@ -46,10 +48,10 @@ struct ItemRow: View {
 }
 
 enum ItemTile {
-    /// Directories navigate; archives and image folders open the reader.
+    /// Directories navigate; archives, PDFs and image folders open the reader.
     static func target(for item: WebDAVItem) -> NavTarget? {
         if item.isDirectory { return .folder(item) }
-        if item.isArchive { return .comic(item) }
+        if item.isArchive || item.isPDF { return .comic(item) }
         return nil
     }
 }

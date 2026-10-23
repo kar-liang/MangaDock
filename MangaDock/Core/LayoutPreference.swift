@@ -50,3 +50,17 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         }
     }
 }
+
+enum ReaderMode: String, CaseIterable, Identifiable {
+    case paged
+    case vertical
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .paged: return "左右翻页"
+        case .vertical: return "上下滚动"
+        }
+    }
+}

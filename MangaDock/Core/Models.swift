@@ -13,12 +13,28 @@ struct WebDAVItem: Identifiable, Hashable {
         (name as NSString).pathExtension.lowercased()
     }
 
+    /// Title without the format suffix — "第01话.cbz" reads as "第01话".
+    var displayName: String {
+        if isDirectory { return name }
+        let stripped = (name as NSString).deletingPathExtension
+        return stripped.isEmpty ? name : stripped
+    }
+
     var isImage: Bool {
         ComicFileTypes.imageExtensions.contains(fileExtension)
     }
 
     var isArchive: Bool {
         ComicFileTypes.archiveExtensions.contains(fileExtension)
+    }
+
+    var isPDF: Bool {
+        ComicFileTypes.pdfExtensions.contains(fileExtension)
+    }
+
+    /// Anything the reader can open.
+    var isReadable: Bool {
+        isArchive || isPDF || isImage
     }
 
     /// Directory URLs must end with a slash or many WebDAV servers answer with a 301.
@@ -38,6 +54,7 @@ struct WebDAVItem: Identifiable, Hashable {
 
 enum ComicFileTypes {
     static let archiveExtensions: Set<String> = ["cbz", "zip"]
+    static let pdfExtensions: Set<String> = ["pdf"]
     static let imageExtensions: Set<String> = [
         "jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "tif", "tiff"
     ]
@@ -58,6 +75,12 @@ struct RecentEntry: Identifiable, Codable, Hashable {
     var isFolder: Bool?
 
     var id: String { urlString }
+
+    var displayName: String {
+        if isFolder == true { return name }
+        let stripped = (name as NSString).deletingPathExtension
+        return stripped.isEmpty ? name : stripped
+    }
 
     var item: WebDAVItem? {
         guard let url = URL(string: urlString) else { return nil }

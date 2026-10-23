@@ -16,6 +16,7 @@ struct ServerSettingsView: View {
     @AppStorage("mangadock.enhance") private var enhanceDefault = false
     @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
     @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
+    @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     var body: some View {
         Form {
@@ -71,6 +72,18 @@ struct ServerSettingsView: View {
                 }
 
                 Section {
+                    Picker("默认翻页方式", selection: $defaultReaderMode) {
+                        ForEach(ReaderMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
+                } header: {
+                    Text("阅读")
+                } footer: {
+                    Text("打开漫画时默认用哪种方式：左右翻页，或者像条漫一样上下滚动。阅读器右上角的按钮可以临时切换，不改这里的默认值。")
+                }
+
+                Section {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("当前引擎").font(.subheadline)
                         Text(ImageEnhancer.engineDescription)
@@ -106,8 +119,8 @@ struct ServerSettingsView: View {
 
                 Section("关于") {
                     LabeledContent("版本", value: Self.appVersion)
-                    LabeledContent("支持格式", value: "CBZ / ZIP / 图片文件夹")
-                    Text("不支持 CBR（RAR）和 PDF。CBR 可以先转成 CBZ。")
+                    LabeledContent("支持格式", value: "CBZ / ZIP / PDF / 图片文件夹")
+                    Text("不支持 CBR（RAR），CBR 可以先转成 CBZ。PDF 会整本下载后逐页渲染。")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }

@@ -6,10 +6,21 @@ struct ReaderView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showBars = true
-    @State private var verticalMode = false
+    @State private var verticalOverride: Bool? = nil
+    @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
         _model = StateObject(wrappedValue: ReaderModel(item: item))
+    }
+
+    /// Settings decides the opening mode; the toolbar toggle only overrides it
+    /// for the chapter you're currently reading.
+    private var verticalMode: Bool {
+        verticalOverride ?? (defaultReaderMode == ReaderMode.vertical.rawValue)
+    }
+
+    private func toggleVerticalMode() {
+        verticalOverride = !verticalMode
     }
 
     private var readerReady: Bool {
@@ -179,7 +190,7 @@ struct ReaderView: View {
             iconButton("chevron.left") { dismiss() }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(model.currentItem.name)
+                Text(model.currentItem.displayName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 HStack(spacing: 6) {
@@ -207,7 +218,7 @@ struct ReaderView: View {
             Spacer(minLength: 4)
 
             iconButton("wand.and.stars", active: model.enhance) { model.toggleEnhance() }
-            iconButton(verticalMode ? "rectangle.grid.1x2" : "scroll") { verticalMode.toggle() }
+            iconButton(verticalMode ? "rectangle.grid.1x2" : "scroll") { toggleVerticalMode() }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -278,7 +289,7 @@ struct ReaderView: View {
 
     private func saveProgress(page: Int) {
         store.recordPage(url: model.currentItem.url,
-                         name: model.currentItem.name,
+                         name: model.currentItem.displayName,
                          page: page,
                          pageCount: model.pageCount,
                          isFolder: model.currentItem.isDirectory)

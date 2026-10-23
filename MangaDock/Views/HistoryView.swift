@@ -70,7 +70,7 @@ struct HistoryView: View {
         HStack(spacing: 12) {
             CoverBox(item: item, width: 52)
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.name).lineLimit(1)
+                Text(entry.displayName).lineLimit(1)
                 Text(entry.progressText)
                     .font(.caption)
                     .foregroundColor(.secondary)

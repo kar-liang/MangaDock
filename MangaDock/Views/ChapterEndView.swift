@@ -22,7 +22,7 @@ struct ChapterEndView: View {
                         Text("下一话")
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.5))
-                        Text(next.name)
+                        Text(next.displayName)
                             .font(.subheadline)
                             .foregroundColor(.white.opacity(0.85))
                             .multilineTextAlignment(.center)
@@ -58,7 +58,7 @@ struct ChapterEndView: View {
                     Button {
                         Task { await model.advanceChapter(direction: -1) }
                     } label: {
-                        Label("回到上一话（\(previous.name)）", systemImage: "arrow.left")
+                        Label("回到上一话（\(previous.displayName)）", systemImage: "arrow.left")
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
