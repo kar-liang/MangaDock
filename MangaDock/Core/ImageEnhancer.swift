@@ -227,12 +227,6 @@ private final class MetalEnhancer {
         srcDesc.usage = [.shaderRead]
         srcDesc.storageMode = .private
         guard let srcTexture = device.makeTexture(descriptor: srcDesc) else { return nil }
-        ciContext.render(
-            CIImage(cgImage: source),
-            to: srcTexture,
-            bounds: CGRect(x: 0, y: 0, width: CGFloat(srcW), height: CGFloat(srcH)),
-            colorSpace: colorSpace
-        )
 
         let dstDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: dstW, height: dstH, mipmapped: false
@@ -254,8 +248,19 @@ private final class MetalEnhancer {
             sharpen: tuning.sharpen
         )
 
-        guard let commandBuffer = queue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
+        // One command buffer does the upload, the resample and the readback ordering,
+        // so the page never round-trips to the CPU in between.
+        guard let commandBuffer = queue.makeCommandBuffer() else { return nil }
+
+        ciContext.render(
+            CIImage(cgImage: source),
+            to: srcTexture,
+            commandBuffer: commandBuffer,
+            bounds: CGRect(x: 0, y: 0, width: CGFloat(srcW), height: CGFloat(srcH)),
+            colorSpace: colorSpace
+        )
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
             return nil
         }
         encoder.setRenderPipelineState(pipeline)
