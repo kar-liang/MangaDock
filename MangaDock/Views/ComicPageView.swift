@@ -43,7 +43,9 @@ struct ComicPageView: View {
         .onTapGesture {
             onTap?()
         }
-        .task(id: index) {
+        .task(id: "\(index)-\(model.enhance)") {
+            image = nil
+            failed = false
             await load()
         }
     }

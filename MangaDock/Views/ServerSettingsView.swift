@@ -4,7 +4,6 @@ struct ServerSettingsView: View {
     let initialSetup: Bool
 
     @EnvironmentObject private var store: AppStore
-    @Environment(\.dismiss) private var dismiss
 
     @State private var serverURL = ""
     @State private var username = ""
@@ -14,6 +13,7 @@ struct ServerSettingsView: View {
     @State private var isError = false
     @State private var cacheSize = ""
     @State private var loaded = false
+    @AppStorage("mangadock.enhance") private var enhanceDefault = false
 
     var body: some View {
         Form {
@@ -53,6 +53,20 @@ struct ServerSettingsView: View {
 
             if !initialSetup {
                 Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("当前引擎").font(.subheadline)
+                        Text(ImageEnhancer.engineDescription)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    Toggle("默认开启画质增强", isOn: $enhanceDefault)
+                } header: {
+                    Text("图像增强")
+                } footer: {
+                    Text("增强在本地 GPU 上跑：2 倍 Lanczos 上采样 + 锐化，对低分辨率扫描件效果明显。\n真·AI 超分 / 上色需要模型本体（Core ML 或云端接口），App 里没有内置模型时不会假装有。")
+                }
+
+                Section {
                     HStack {
                         Text("缓存占用")
                         Spacer()
@@ -60,6 +74,7 @@ struct ServerSettingsView: View {
                     }
                     Button("清除漫画缓存", role: .destructive) {
                         CacheManager.clear()
+                        CoverStore.shared.clearMemory()
                         refreshCacheSize()
                     }
                     Button("清空阅读记录", role: .destructive) {
@@ -68,11 +83,11 @@ struct ServerSettingsView: View {
                 } header: {
                     Text("本地数据")
                 } footer: {
-                    Text("缓存的是下载过的 CBZ 和看过的散图，清掉不影响服务器上的文件。")
+                    Text("缓存的是下载过的 CBZ、看过的散图和网格封面，清掉不影响服务器上的文件。")
                 }
 
                 Section("关于") {
-                    LabeledContent("版本", value: "1.1")
+                    LabeledContent("版本", value: "1.2")
                     LabeledContent("支持格式", value: "CBZ / ZIP / 图片文件夹")
                     Text("不支持 CBR（RAR）和 PDF。CBR 可以先转成 CBZ。")
                         .font(.footnote)
@@ -82,13 +97,6 @@ struct ServerSettingsView: View {
         }
         .navigationTitle(initialSetup ? "连接 WebDAV" : "设置")
         .navigationBarTitleDisplayMode(initialSetup ? .large : .inline)
-        .toolbar {
-            if !initialSetup {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
-                }
-            }
-        }
         .onAppear(perform: loadExisting)
     }
 
@@ -139,10 +147,6 @@ struct ServerSettingsView: View {
             store.save(serverURL: text, username: username, password: password)
             message = "连接成功，找到 \(items.count) 项（其中 \(comicCount) 个目录/压缩包）"
             isError = false
-            if initialSetup {
-                // RootView swaps to HomeView automatically once configured.
-                dismiss()
-            }
         } catch {
             message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             isError = true

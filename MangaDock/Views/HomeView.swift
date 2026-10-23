@@ -1,10 +1,10 @@
 import SwiftUI
 
+/// 书架 tab: browse the WebDAV library.
 struct HomeView: View {
     @EnvironmentObject private var store: AppStore
 
     @StateObject private var loader = FolderLoader()
-    @State private var showSettings = false
     @AppStorage("mangadock.useGrid") private var useGrid = false
 
     var body: some View {
@@ -12,7 +12,7 @@ struct HomeView: View {
             Group {
                 if useGrid { gridContent } else { listContent }
             }
-            .navigationTitle("漫画坞")
+            .navigationTitle("书架")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
@@ -21,16 +21,11 @@ struct HomeView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         useGrid.toggle()
                     } label: {
                         Image(systemName: useGrid ? "list.bullet" : "square.grid.2x2")
-                    }
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
                     }
                 }
             }
@@ -43,11 +38,6 @@ struct HomeView: View {
                 }
             }
             .task { await reload() }
-            .sheet(isPresented: $showSettings) {
-                NavigationStack {
-                    ServerSettingsView(initialSetup: false)
-                }
-            }
         }
     }
 
@@ -55,38 +45,6 @@ struct HomeView: View {
 
     private var listContent: some View {
         List {
-            if !store.recent.isEmpty {
-                Section("继续阅读") {
-                    ForEach(Array(store.recent.prefix(5))) { entry in
-                        if let item = entry.item {
-                            NavigationLink(value: NavTarget.comic(item)) {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "book.fill")
-                                        .foregroundColor(.orange)
-                                        .frame(width: 24)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(entry.name).lineLimit(1)
-                                        Text(entry.progressText)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "arrow.uturn.forward")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-                    }
-                    .onDelete { offsets in
-                        let snapshot = Array(store.recent.prefix(5))
-                        for offset in offsets where offset < snapshot.count {
-                            store.removeRecent(snapshot[offset])
-                        }
-                    }
-                }
-            }
-
             Section {
                 if loader.isLoading {
                     HStack(spacing: 10) {
@@ -119,31 +77,7 @@ struct HomeView: View {
 
     private var gridContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if !store.recent.isEmpty {
-                    Text("继续阅读")
-                        .font(.subheadline.weight(.semibold))
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 14) {
-                            ForEach(Array(store.recent.prefix(8))) { entry in
-                                if let item = entry.item {
-                                    NavigationLink(value: NavTarget.comic(item)) {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            CoverTile(item: item)
-                                                .frame(width: 104)
-                                            ProgressView(value: entry.readProgress)
-                                                .tint(.orange)
-                                                .frame(width: 104)
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-
+            VStack(alignment: .leading, spacing: 16) {
                 if loader.isLoading {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -199,12 +133,5 @@ struct HomeView: View {
 
     private func reload() async {
         await loader.load(url: store.baseURL, client: store.makeClient())
-    }
-}
-
-private extension RecentEntry {
-    var readProgress: Double {
-        guard pageCount > 0 else { return 0 }
-        return min(1, Double(page + 1) / Double(pageCount))
     }
 }

@@ -16,13 +16,11 @@ struct RootView: View {
     @EnvironmentObject private var store: AppStore
 
     var body: some View {
-        Group {
-            if store.isConfigured {
-                HomeView()
-            } else {
-                NavigationStack {
-                    ServerSettingsView(initialSetup: true)
-                }
+        if store.isConfigured {
+            RootTabView()
+        } else {
+            NavigationStack {
+                ServerSettingsView(initialSetup: true)
             }
         }
     }

@@ -2,6 +2,8 @@ import Foundation
 import UIKit
 import SwiftUI
 
+private let enhanceDefaultsKey = "mangadock.enhance"
+
 @MainActor
 final class ReaderModel: ObservableObject {
     let item: WebDAVItem
@@ -12,6 +14,7 @@ final class ReaderModel: ObservableObject {
     @Published var statusText: String = "正在打开…"
     @Published var downloadProgress: Double? = nil
     @Published var errorMessage: String? = nil
+    @Published var enhance: Bool = UserDefaults.standard.bool(forKey: enhanceDefaultsKey)
 
     private var source: ComicPageSource?
     private let imageCache = NSCache<NSNumber, UIImage>()
@@ -19,6 +22,12 @@ final class ReaderModel: ObservableObject {
     init(item: WebDAVItem) {
         self.item = item
         imageCache.countLimit = 6
+    }
+
+    func toggleEnhance() {
+        enhance.toggle()
+        UserDefaults.standard.set(enhance, forKey: enhanceDefaultsKey)
+        imageCache.removeAllObjects()
     }
 
     func load(client: WebDAVClient, startPage: Int) async {
@@ -76,14 +85,18 @@ final class ReaderModel: ObservableObject {
     }
 
     func image(at position: Int) async -> UIImage? {
-        let key = NSNumber(value: position)
+        // Two cache slots per page: plain and enhanced, so toggling is instant.
+        let key = NSNumber(value: position * 2 + (enhance ? 1 : 0))
         if let cached = imageCache.object(forKey: key) { return cached }
         guard let source, position >= 0, position < source.pageCount else { return nil }
 
         do {
             let data = try await source.pageData(at: position)
-            let decoded = await Task.detached(priority: .userInitiated) {
-                ImageDecoder.downsample(data)
+            let wantsEnhance = enhance
+            let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                guard let base = ImageDecoder.downsample(data) else { return nil }
+                guard wantsEnhance else { return base }
+                return ImageEnhancer.enhance(base) ?? base
             }.value
             if let decoded {
                 imageCache.setObject(decoded, forKey: key)
