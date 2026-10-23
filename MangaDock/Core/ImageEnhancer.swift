@@ -214,30 +214,44 @@ private final class MetalEnhancer {
         let dstH = max(1, Int((CGFloat(srcH) * scale).rounded()))
 
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        let ciContext = CIContext(
-            mtlDevice: device,
-            options: [.workingColorSpace: colorSpace, .outputColorSpace: colorSpace]
-        )
 
-        // Upload through Core Image so its row-order convention matches the way we
-        // read the result back. Both sides go through CI, so no hand-rolled flip.
+        // Both ends stay in CPU-visible memory: the page is written into a bitmap
+        // context backed by an MTLBuffer and read back straight from the output
+        // buffer. Core Image never touches these textures, so there is no cross-queue
+        // synchronisation to get wrong — which is what produced the magenta screen.
+        guard let upload = Self.makeSourceBuffer(
+            device: device, width: srcW, height: srcH, image: source, colorSpace: colorSpace
+        ) else { return nil }
+
+        let dstStride = Self.alignedStride(dstW)
+        guard let destinationBuffer = device.makeBuffer(
+            length: dstStride * dstH, options: .storageModeShared
+        ) else { return nil }
+
         let srcDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: srcW, height: srcH, mipmapped: false
         )
         srcDesc.usage = [.shaderRead]
-        srcDesc.storageMode = .private
-        guard let srcTexture = device.makeTexture(descriptor: srcDesc) else { return nil }
+        srcDesc.storageMode = .shared
+        guard let sourceTexture = upload.buffer.makeTexture(
+            descriptor: srcDesc, offset: 0, bytesPerRow: upload.stride
+        ) else { return nil }
 
         let dstDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: dstW, height: dstH, mipmapped: false
         )
         dstDesc.usage = [.renderTarget, .shaderRead]
-        dstDesc.storageMode = .private
-        guard let dstTexture = device.makeTexture(descriptor: dstDesc) else { return nil }
+        dstDesc.storageMode = .shared
+        guard let destinationTexture = destinationBuffer.makeTexture(
+            descriptor: dstDesc, offset: 0, bytesPerRow: dstStride
+        ) else { return nil }
 
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = dstTexture
-        pass.colorAttachments[0].loadAction = .dontCare
+        pass.colorAttachments[0].texture = destinationTexture
+        // Clear to white instead of .dontCare: if the draw ever fails to cover the
+        // target, paint a blank page rather than expose the allocation's contents.
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(1, 1, 1, 1)
         pass.colorAttachments[0].storeAction = .store
 
         var params = EnhancerParams(
@@ -248,33 +262,152 @@ private final class MetalEnhancer {
             sharpen: tuning.sharpen
         )
 
-        // One command buffer does the upload, the resample and the readback ordering,
-        // so the page never round-trips to the CPU in between.
-        guard let commandBuffer = queue.makeCommandBuffer() else { return nil }
-
-        ciContext.render(
-            CIImage(cgImage: source),
-            to: srcTexture,
-            commandBuffer: commandBuffer,
-            bounds: CGRect(x: 0, y: 0, width: CGFloat(srcW), height: CGFloat(srcH)),
-            colorSpace: colorSpace
-        )
-
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
+        guard let commandBuffer = queue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
             return nil
         }
         encoder.setRenderPipelineState(pipeline)
-        encoder.setFragmentTexture(srcTexture, index: 0)
+        encoder.setFragmentTexture(sourceTexture, index: 0)
         encoder.setFragmentBytes(&params, length: MemoryLayout<EnhancerParams>.stride, index: 0)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         encoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
 
-        guard let output = CIImage(mtlTexture: dstTexture, options: [.colorSpace: colorSpace]) else {
+        guard commandBuffer.status == .completed else { return nil }
+
+        let bytes = destinationBuffer.contents().assumingMemoryBound(to: UInt8.self)
+        // A flat page, or one that is almost entirely non-grey, means the draw did not
+        // land the way we intended. Refuse and let the caller fall back to Lanczos —
+        // a plainer page beats a broken one.
+        guard Self.looksLikeAPage(bytes, width: dstW, height: dstH, stride: dstStride) else {
             return nil
         }
-        return ciContext.createCGImage(output, from: output.extent)
+
+        return Self.makeImage(
+            from: bytes, width: dstW, height: dstH, stride: dstStride, colorSpace: colorSpace
+        )
+    }
+
+    // MARK: - Buffer plumbing
+
+    private struct Upload {
+        let buffer: MTLBuffer
+        let stride: Int
+    }
+
+    private static func alignedStride(_ width: Int) -> Int {
+        // MTLBuffer-backed textures want a 256-byte aligned row.
+        ((width * 4 + 255) / 256) * 256
+    }
+
+    private static func makeSourceBuffer(
+        device: MTLDevice, width: Int, height: Int, image: CGImage, colorSpace: CGColorSpace
+    ) -> Upload? {
+        let stride = alignedStride(width)
+        guard let buffer = device.makeBuffer(
+            length: stride * height, options: .storageModeShared
+        ) else { return nil }
+
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+            | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let context = CGContext(
+            data: buffer.contents(),
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: stride,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else { return nil }
+
+        let bounds = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        // Flatten any alpha onto white so transparency does not read as black ink.
+        context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+        context.fill(bounds)
+        // Flip so buffer row 0 is the top of the page, matching both CGImage and the
+        // framebuffer's first row.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        context.interpolationQuality = .high
+        context.draw(image, in: bounds)
+
+        return Upload(buffer: buffer, stride: stride)
+    }
+
+    private static func looksLikeAPage(
+        _ bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int
+    ) -> Bool {
+        let stepX = max(1, width / 16)
+        let stepY = max(1, height / 16)
+
+        var sampled = 0
+        var chromatic = 0
+        var flat = true
+        var first: (UInt8, UInt8, UInt8)?
+
+        var y = 0
+        while y < height {
+            var x = 0
+            while x < width {
+                let offset = y * stride + x * 4
+                let r = bytes[offset]
+                let g = bytes[offset + 1]
+                let b = bytes[offset + 2]
+
+                if let first {
+                    if first != (r, g, b) { flat = false }
+                } else {
+                    first = (r, g, b)
+                }
+
+                if abs(Int(r) - Int(g)) > 40 || abs(Int(b) - Int(g)) > 40 {
+                    chromatic += 1
+                }
+                sampled += 1
+                x += stepX
+            }
+            y += stepY
+        }
+
+        guard sampled > 0 else { return false }
+        if flat { return false }
+        // The magenta screen: the whole page landing on one non-grey colour.
+        if chromatic * 20 >= sampled * 19 { return false }
+        return true
+    }
+
+    private static func makeImage(
+        from bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int, colorSpace: CGColorSpace
+    ) -> CGImage? {
+        let tight = width * 4
+        var data = Data(count: tight * height)
+        let copied = data.withUnsafeMutableBytes { destination -> Bool in
+            guard let base = destination.baseAddress else { return false }
+            for row in 0..<height {
+                memcpy(base.advanced(by: row * tight), bytes.advanced(by: row * stride), tight)
+            }
+            return true
+        }
+        guard copied, let provider = CGDataProvider(data: data as CFData) else { return nil }
+
+        let bitmapInfo = CGBitmapInfo(
+            rawValue: CGImageAlphaInfo.premultipliedLast.rawValue
+                | CGBitmapInfo.byteOrder32Big.rawValue
+        )
+        return CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: tight,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo,
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
     }
 
     // MARK: - Shader
