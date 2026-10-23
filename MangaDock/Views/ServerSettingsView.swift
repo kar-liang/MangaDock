@@ -16,6 +16,8 @@ struct ServerSettingsView: View {
     @AppStorage("mangadock.enhance") private var enhanceDefault = false
     @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
     @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
+    @AppStorage(ImageEnhancer.lineDarkenKey) private var lineDarken = 0.18
+    @AppStorage(ImageEnhancer.lineThinKey) private var lineThin = 0.45
 
     var body: some View {
         Form {
@@ -78,10 +80,32 @@ struct ServerSettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     Toggle("默认开启画质增强", isOn: $enhanceDefault)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("线条加黑")
+                            Spacer()
+                            Text(String(format: "%.2f", lineDarken))
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $lineDarken, in: 0...0.6, step: 0.02)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("细化线条")
+                            Spacer()
+                            Text(String(format: "%.2f", lineThin))
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $lineThin, in: 0...1, step: 0.05)
+                    }
                 } header: {
                     Text("图像增强")
                 } footer: {
-                    Text("增强在本地 GPU 上跑：2 倍 Lanczos 上采样 + 锐化，对低分辨率扫描件效果明显。\n真·AI 超分 / 上色需要模型本体（Core ML 或云端接口），App 里没有内置模型时不会假装有。")
+                    Text("Metal 边缘导向放大：沿边缘方向重采样，跨边缘方向保持原样，所以 1 像素的线条放大后还是 1 像素，不会糊成灰边。\n线条加黑按梯度识别线稿单独加深（整图无差别锐化会出光晕）；细化线条把描边的灰色过渡压向黑白两端，小字更利落。\n两个滑块改完，重新打开漫画生效。\n真·AI 超分需要模型本体：把 SuperResolution.mlmodelc 丢进 target 就会自动接管，没有就不假装有。")
                 }
 
                 Section {

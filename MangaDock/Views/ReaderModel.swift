@@ -33,6 +33,9 @@ final class ReaderModel: ObservableObject {
     init(item: WebDAVItem) {
         currentItem = item
         imageCache.countLimit = 6
+        // Six enhanced pages at 3000 px wide is roughly 300 MB of pixels — enough to
+        // get killed on a smaller device. Cap by bytes as well as by count.
+        imageCache.totalCostLimit = 180 * 1024 * 1024
     }
 
     // MARK: - Derived
@@ -211,7 +214,7 @@ final class ReaderModel: ObservableObject {
                 return ImageEnhancer.enhance(base) ?? base
             }.value
             if let decoded {
-                imageCache.setObject(decoded, forKey: key)
+                imageCache.setObject(decoded, forKey: key, cost: Self.cost(of: decoded))
             }
             return decoded
         } catch {
@@ -220,6 +223,11 @@ final class ReaderModel: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private static func cost(of image: UIImage) -> Int {
+        guard let cgImage = image.cgImage else { return 1 }
+        return cgImage.bytesPerRow * cgImage.height
+    }
 
     private static func message(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
