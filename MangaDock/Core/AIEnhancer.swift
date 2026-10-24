@@ -96,17 +96,23 @@ enum AIEnhancer {
             padded = src
         }
 
-        // Window origins. The last tile is right/bottom-aligned so it is always a
-        // full 512×512 — no per-tile padding needed, and coverage is exact.
-        var origins: [Int] = []
-        var o = 0
-        while o + tileSize < pw {
-            origins.append(o)
-            o += tileSize - overlap * 2
+        // Window origins per axis. The last window is right/bottom-aligned so it
+        // is always a full 512×512 — no per-tile padding needed, coverage exact.
+        // x and y are generated independently from pw and ph: a webcomic page is
+        // much taller than wide, and sharing one origin list (computed from the
+        // width) left the lower part of the page uncovered — the "black band" bug.
+        func windows(_ total: Int) -> [Int] {
+            var result: [Int] = []
+            var o = 0
+            while o + tileSize < total {
+                result.append(o)
+                o += tileSize - overlap * 2
+            }
+            result.append(max(0, total - tileSize))
+            return result
         }
-        origins.append(max(0, pw - tileSize))
-        let xs = origins
-        let ys = origins
+        let xs = windows(pw)
+        let ys = windows(ph)
 
         for oy in ys {
             for ox in xs {
