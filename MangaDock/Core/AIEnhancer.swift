@@ -180,8 +180,10 @@ enum AIEnhancer {
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.interpolationQuality = .high
         // CGContext origin is bottom-left — anchor the image to the TOP-left.
-        context.draw(tile, in: CGRect(x: 0, y: CGFloat(height - tile.height),
-                                      width: tile.width, height: tile.height))
+        context.draw(tile, in: CGRect(x: 0,
+                                      y: CGFloat(height - tile.height),
+                                      width: CGFloat(tile.width),
+                                      height: CGFloat(tile.height)))
         return context.makeImage()
     }
 
