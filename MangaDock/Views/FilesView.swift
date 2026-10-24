@@ -17,23 +17,6 @@ struct FilesView: View {
                 if mode == .grid { gridContent } else { listContent }
             }
             .navigationTitle("文件")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        Task { await reload() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        mode = (mode == .grid ? .list : .grid)
-                        LayoutPreference.shared.setMode(mode, for: folderKey)
-                    } label: {
-                        Image(systemName: mode == .grid ? "list.bullet" : "square.grid.2x2")
-                    }
-                }
-            }
             .libraryNavigation()
             .task { await reload() }
             .onAppear { mode = LayoutPreference.shared.mode(for: folderKey) }

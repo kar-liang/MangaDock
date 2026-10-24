@@ -13,10 +13,18 @@ struct ServerSettingsView: View {
     @State private var isError = false
     @State private var cacheSize = ""
     @State private var loaded = false
+    @State private var diagResults: [NetDiagnostics.Result] = []
+    @State private var diagRunning = false
+    @State private var confirmClearServer = false
     @AppStorage("mangadock.enhance") private var enhanceDefault = false
     @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
     @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
+    @AppStorage("mangadock.shelfLayout") private var shelfLayoutRaw = LayoutMode.grid.rawValue
+    @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
+    @AppStorage("mangadock.tab.files") private var showFilesTab = true
+    @AppStorage("mangadock.tab.history") private var showHistoryTab = false
+    @AppStorage("mangadock.allowSelfSigned") private var allowSelfSigned = false
 
     var body: some View {
         Form {
@@ -52,6 +60,10 @@ struct ServerSettingsView: View {
                         .font(.footnote)
                         .foregroundColor(isError ? .red : .green)
                 }
+
+                Button("清除 WebDAV 配置", role: .destructive) {
+                    confirmClearServer = true
+                }
             }
 
             if !initialSetup {
@@ -65,10 +77,56 @@ struct ServerSettingsView: View {
                         Text("网格").tag(LayoutMode.grid.rawValue)
                         Text("列表").tag(LayoutMode.list.rawValue)
                     }
+                    Picker("书架视图", selection: $shelfLayoutRaw) {
+                        Text("网格").tag(LayoutMode.grid.rawValue)
+                        Text("列表").tag(LayoutMode.list.rawValue)
+                    }
                 } header: {
                     Text("显示")
                 } footer: {
-                    Text("每个目录的列表/网格是分开记的：书架设成网格，二级目录设成列表，互不影响。这里只决定第一次进入某个目录时用哪种。")
+                    Text("目录的视图不再放在标题栏按钮里，走这里的设置。已经手动设过视图的目录会保留原来的记忆，新目录跟随「默认视图」。")
+                }
+
+                Section {
+                    Toggle("书架", isOn: $showShelfTab)
+                    Toggle("文件", isOn: $showFilesTab)
+                    Toggle("记录", isOn: $showHistoryTab)
+                } header: {
+                    Text("底栏标签")
+                } footer: {
+                    Text("关掉的标签会从底栏消失，数据不会删。设置页始终显示，免得把自己锁在外面。")
+                }
+
+                Section {
+                    Toggle("信任自签名证书", isOn: $allowSelfSigned)
+
+                    Button {
+                        Task { await runDiagnostics() }
+                    } label: {
+                        HStack {
+                            Text(diagRunning ? "诊断中…" : "连接诊断")
+                            Spacer()
+                            if diagRunning { ProgressView() }
+                        }
+                    }
+                    .disabled(diagRunning)
+
+                    ForEach(diagResults) { result in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Image(systemName: result.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundColor(result.ok ? .green : .red)
+                                Text(result.title).font(.footnote)
+                            }
+                            Text(result.detail)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("网络")
+                } footer: {
+                    Text("诊断会分别用「当前设置」「强制忽略证书」「HTTP 同端口」连一次服务器，直接告诉你卡在哪一层。\n自签名证书开关只在连自己服务器时打开；连公共 Wi-Fi 时建议关掉 —— 开了等于放弃中间人校验。")
                 }
 
                 Section {
@@ -129,6 +187,18 @@ struct ServerSettingsView: View {
         .navigationTitle(initialSetup ? "连接 WebDAV" : "设置")
         .navigationBarTitleDisplayMode(initialSetup ? .large : .inline)
         .onAppear(perform: loadExisting)
+        .confirmationDialog("清除 WebDAV 配置？", isPresented: $confirmClearServer, titleVisibility: .visible) {
+            Button("清除", role: .destructive) {
+                store.clearConfiguration()
+                serverURL = ""
+                username = ""
+                password = ""
+                message = nil
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("清除后回到首次连接页面，本地缓存和阅读记录不受影响。")
+        }
     }
 
     private func loadExisting() {
@@ -142,6 +212,13 @@ struct ServerSettingsView: View {
 
     private func refreshCacheSize() {
         cacheSize = CacheManager.formattedSize()
+    }
+
+    private func runDiagnostics() async {
+        diagRunning = true
+        diagResults = []
+        diagResults = await NetDiagnostics.run(store.serverURL)
+        diagRunning = false
     }
 
     /// Read straight from the bundle so the label can never desync from the build.
@@ -187,7 +264,7 @@ struct ServerSettingsView: View {
             message = "连接成功，找到 \(items.count) 项（其中 \(comicCount) 个目录/压缩包）"
             isError = false
         } catch {
-            message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            message = NetErrorText.friendly(error)
             isError = true
         }
         isTesting = false

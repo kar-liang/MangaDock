@@ -237,7 +237,7 @@ final class ReaderModel: ObservableObject {
     // MARK: - Helpers
 
     private static func message(for error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        NetErrorText.friendly(error)
     }
 
     static func parentURL(of url: URL) -> URL? {

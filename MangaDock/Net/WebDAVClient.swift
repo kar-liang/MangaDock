@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 enum WebDAVError: LocalizedError {
     case invalidURL
@@ -237,7 +238,7 @@ final class WebDAVClient: @unchecked Sendable {
 
 // MARK: - Session delegate (Basic / Digest auth)
 
-final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate {
+final class WebDAVSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let username: String
     private let password: String
 
@@ -246,18 +247,35 @@ final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate {
         self.password = password
     }
 
-    func urlSession(_ session: URLSession,
-                    task: URLSessionTask,
-                    didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    private func handle(_ challenge: URLAuthenticationChallenge,
+                        _ completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         switch challenge.protectionSpace.authenticationMethod {
         case NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodHTTPDigest,
              NSURLAuthenticationMethodNTLM:
             let credential = URLCredential(user: username, password: password, persistence: .forSession)
             completionHandler(.useCredential, credential)
+
+        case NSURLAuthenticationMethodServerTrust:
+            TLSTrustDelegate.handle(challenge, completionHandler)
+
         default:
             completionHandler(.performDefaultHandling, nil)
         }
+    }
+
+    // Both levels: a delegate declaring URLSessionTaskDelegate receives the
+    // task-level call and would otherwise skip the session-level one entirely.
+    func urlSession(_ session: URLSession,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        handle(challenge, completionHandler)
+    }
+
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        handle(challenge, completionHandler)
     }
 }
 

@@ -13,18 +13,8 @@ struct BrowserView: View {
         Group {
             if mode == .grid { gridContent } else { listContent }
         }
-        .navigationTitle(folder.name)
+        .navigationTitle(folder.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    mode = (mode == .grid ? .list : .grid)
-                    LayoutPreference.shared.setMode(mode, for: folderKey)
-                } label: {
-                    Image(systemName: mode == .grid ? "list.bullet" : "square.grid.2x2")
-                }
-            }
-        }
         .task { await reload() }
         .onAppear { mode = LayoutPreference.shared.mode(for: folderKey) }
     }

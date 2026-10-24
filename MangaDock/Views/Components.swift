@@ -115,3 +115,27 @@ struct ErrorStateView: View {
         .padding(.vertical, 24)
     }
 }
+
+// MARK: - Liquid Glass helpers
+
+extension View {
+    @ViewBuilder
+    func glassPanel(cornerRadius: CGFloat = 20) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular,
+                             in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            self.background(.ultraThinMaterial,
+                            in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    func glassCircle() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Circle())
+        } else {
+            self.background(.ultraThinMaterial, in: Circle())
+        }
+    }
+}

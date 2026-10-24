@@ -80,6 +80,16 @@ final class AppStore: ObservableObject {
         Keychain.save(password, account: "webdav")
     }
 
+    /// Wipe the server config so the app returns to the first-run setup screen.
+    func clearConfiguration() {
+        serverURL = ""
+        username = ""
+        password = ""
+        defaults.removeObject(forKey: Keys.serverURL)
+        defaults.removeObject(forKey: Keys.username)
+        Keychain.save("", account: "webdav")
+    }
+
     // MARK: - Reading progress
 
     func recentPage(for url: URL) -> Int {

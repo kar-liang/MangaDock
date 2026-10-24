@@ -23,7 +23,7 @@ final class FolderLoader: ObservableObject {
             items = try await client.list(url)
             isLoading = false
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = NetErrorText.friendly(error)
             isLoading = false
         }
     }

@@ -25,6 +25,13 @@ final class LayoutPreference {
         set { defaults.set(newValue.rawValue, forKey: defaultKey) }
     }
 
+    private let shelfKey = "mangadock.shelfLayout"
+
+    var shelfMode: LayoutMode {
+        get { LayoutMode(rawValue: defaults.string(forKey: shelfKey) ?? "") ?? .grid }
+        set { defaults.set(newValue.rawValue, forKey: shelfKey) }
+    }
+
     func mode(for folderKey: String) -> LayoutMode {
         LayoutMode(rawValue: map[folderKey] ?? "") ?? defaultMode
     }
