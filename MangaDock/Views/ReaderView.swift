@@ -214,7 +214,7 @@ struct ReaderView: View {
                             .background(Color.white.opacity(0.18), in: Capsule())
                     }
                     if model.enhance {
-                        Text("增强")
+                        Text(enhanceBadgeText)
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 5)
@@ -227,7 +227,7 @@ struct ReaderView: View {
 
             Spacer(minLength: 4)
 
-            iconButton("wand.and.stars", active: model.enhance) { model.toggleEnhance() }
+            enhanceMenuButton()
             iconButton(verticalMode ? "rectangle.grid.1x2" : "scroll") { toggleVerticalMode() }
         }
         .padding(.horizontal, 8)
@@ -284,6 +284,50 @@ struct ReaderView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// ✨ button as a three-state menu: off / AI 2x / AI 4x. Falls back to the
+    /// plain toggle when no AI model is bundled.
+    private func enhanceMenuButton() -> some View {
+        let label = Image(systemName: "wand.and.stars")
+            .font(.system(size: 15, weight: .semibold))
+            .frame(width: 36, height: 34)
+            .foregroundColor(model.enhance ? .orange : .white)
+            .contentShape(Rectangle())
+
+        Group {
+            if ImageEnhancer.hasAIModel {
+                Menu {
+                    Button {
+                        model.setEnhance(on: false)
+                    } label: {
+                        Label("关闭增强", systemImage: model.enhance ? "circle" : "checkmark.circle.fill")
+                    }
+                    Button {
+                        model.setEnhance(on: true, scale: .two)
+                    } label: {
+                        Label("AI 超分 2 倍", systemImage: isEnhance(.two) ? "checkmark.circle.fill" : "circle")
+                    }
+                    Button {
+                        model.setEnhance(on: true, scale: .four)
+                    } label: {
+                        Label("AI 超分 4 倍", systemImage: isEnhance(.four) ? "checkmark.circle.fill" : "circle")
+                    }
+                } label: { label }
+            } else {
+                Button { model.toggleEnhance() } label: { label }
+                    .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func isEnhance(_ scale: AIEnhancer.Scale) -> Bool {
+        model.enhance && ImageEnhancer.aiScale == scale
+    }
+
+    private var enhanceBadgeText: String {
+        guard ImageEnhancer.hasAIModel else { return "增强" }
+        return "AI \(ImageEnhancer.aiScale.rawValue)x"
     }
 
     private func pagingButton(_ name: String, action: @escaping () -> Void) -> some View {

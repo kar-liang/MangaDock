@@ -25,6 +25,9 @@ final class ReaderModel: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var chapterError: String? = nil
     @Published var enhance: Bool = UserDefaults.standard.bool(forKey: enhanceDefaultsKey)
+    /// Bumped whenever the enhance mode (on/off or 2x/4x) changes, so visible
+    /// pages know to drop their decoded image and re-render.
+    @Published private(set) var enhanceGeneration = 0
 
     private var source: ComicPageSource?
     private var client: WebDAVClient?
@@ -67,9 +70,20 @@ final class ReaderModel: ObservableObject {
     }
 
     func toggleEnhance() {
-        enhance.toggle()
+        setEnhance(on: !enhance)
+    }
+
+    /// Toolbar entry: turns enhancement on/off and optionally picks the AI scale.
+    /// Bumps `enhanceGeneration` so visible pages re-render with the new mode.
+    func setEnhance(on: Bool, scale: AIEnhancer.Scale? = nil) {
+        let changed = on != enhance || (scale != nil && scale != ImageEnhancer.aiScale)
+        guard changed else { return }
+        enhance = on
+        if let scale { ImageEnhancer.aiScale = scale }
         UserDefaults.standard.set(enhance, forKey: enhanceDefaultsKey)
         imageCache.removeAllObjects()
+        enhanceGeneration += 1
+        prewarm(from: index + 1)
     }
 
     // MARK: - Loading

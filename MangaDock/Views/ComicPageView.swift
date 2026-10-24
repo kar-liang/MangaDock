@@ -12,7 +12,7 @@ struct ComicPageView: View {
 
     @State private var image: UIImage?
     @State private var failed = false
-    @State private var loadedEnhance: Bool?
+    @State private var loadedGeneration = 0
 
     var body: some View {
         Group {
@@ -32,12 +32,12 @@ struct ComicPageView: View {
         .onTapGesture {
             onTap?()
         }
-        .task(id: "\(index)-\(model.enhance)") {
-            // Only drop the decoded image when the enhance setting actually flipped.
-            if let loadedEnhance, loadedEnhance != model.enhance {
+        .task(id: "\(index)-\(model.enhanceGeneration)") {
+            // Only drop the decoded image when the enhance mode actually changed.
+            if loadedGeneration != model.enhanceGeneration {
                 image = nil
             }
-            loadedEnhance = model.enhance
+            loadedGeneration = model.enhanceGeneration
             await load()
         }
     }
