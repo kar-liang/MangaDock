@@ -56,6 +56,22 @@ jobs:
           path: MangaDock.ipa
           if-no-files-found: error
 
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(grep 'MARKETING_VERSION' project.yml | head -1 | awk -F'"' '{print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v${VERSION}" MangaDock.ipa \
+            --title "MangaDock ${VERSION}" \
+            --notes "自动构建产物（由 Build IPA workflow 生成）。下载 MangaDock.ipa 用 SideStore / AltStore / LiveContainer 侧载，要求 iOS 18+。" \
+            --cleanup-tag
+
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
