@@ -295,7 +295,7 @@ struct ReaderView: View {
             .foregroundColor(model.enhance ? .orange : .white)
             .contentShape(Rectangle())
 
-        Group {
+        return Group {
             if ImageEnhancer.hasAIModel {
                 Menu {
                     Button {
