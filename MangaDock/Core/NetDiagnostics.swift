@@ -18,7 +18,7 @@ enum NetDiagnostics {
         }
 
         private var allows: Bool {
-            forceAllow ?? TrustPolicy.allowsSelfSigned
+            forceAllow ?? false  // "current settings" now means strict validation
         }
 
         private func handle(_ challenge: URLAuthenticationChallenge,

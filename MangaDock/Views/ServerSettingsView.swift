@@ -24,7 +24,6 @@ struct ServerSettingsView: View {
     @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
     @AppStorage("mangadock.tab.files") private var showFilesTab = true
     @AppStorage("mangadock.tab.history") private var showHistoryTab = false
-    @AppStorage("mangadock.allowSelfSigned") private var allowSelfSigned = false
 
     var body: some View {
         Form {
@@ -98,8 +97,6 @@ struct ServerSettingsView: View {
                 }
 
                 Section {
-                    Toggle("信任自签名证书", isOn: $allowSelfSigned)
-
                     Button {
                         Task { await runDiagnostics() }
                     } label: {
@@ -126,7 +123,7 @@ struct ServerSettingsView: View {
                 } header: {
                     Text("网络")
                 } footer: {
-                    Text("诊断会分别用「当前设置」「强制忽略证书」「HTTP 同端口」连一次服务器，直接告诉你卡在哪一层。\n自签名证书开关只在连自己服务器时打开；连公共 Wi-Fi 时建议关掉 —— 开了等于放弃中间人校验。")
+                    Text("诊断会分别用「当前设置」「忽略证书校验」「HTTP 同端口」连一次服务器，直接告诉你卡在哪一层。")
                 }
 
                 Section {

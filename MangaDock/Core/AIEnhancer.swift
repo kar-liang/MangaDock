@@ -56,15 +56,27 @@ enum AIEnhancer {
     // MARK: - Inference
 
     private static func run(cgImage: CGImage, scale: Scale) -> UIImage? {
-        let width = cgImage.width
-        let height = cgImage.height
-        guard width > 0, height > 0 else { return nil }
-
+        guard cgImage.width > 0, cgImage.height > 0 else { return nil }
         guard let model = model() else { return nil }
 
-        // Output canvas at the target scale.
-        let outW = width * scale.rawValue
-        let outH = height * scale.rawValue
+        // 2x mode: downscale the source to half FIRST, then run the native 4x.
+        // The output then equals the original at 2x — with 4x fewer tiles, so
+        // roughly 4x faster than upscaling everything and halving afterwards.
+        // Input caps keep the output bitmap within memory-friendly bounds
+        // (2x ≤ 3200px, 4x ≤ 4096px long edge).
+        let src: CGImage
+        switch scale {
+        case .two:
+            let half = resize(cgImage, to: CGSize(width: cgImage.width / 2, height: cgImage.height / 2)) ?? cgImage
+            src = clampLongEdge(half, to: 1600)
+        case .four:
+            src = clampLongEdge(cgImage, to: 1024)
+        }
+
+        let width = src.width
+        let height = src.height
+        let outW = width * 4
+        let outH = height * 4
 
         guard let context = CGContext(
             data: nil, width: outW, height: outH,
@@ -72,83 +84,67 @@ enum AIEnhancer {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
-
         context.interpolationQuality = .high
 
-        // Slide a 512px window across the image. Each tile overlaps its neighbors by
-        // `overlap` px; the overlap is discarded after upscaling so seams don't show.
-        let step = tileSize - overlap * 2
-
-        var oy = 0
-        while oy < height {
-            var ox = 0
-            while ox < width {
-                let tileW = min(tileSize, width - ox)
-                let tileH = min(tileSize, height - oy)
-                let rect = CGRect(x: ox, y: oy, width: tileW, height: tileH)
-
-                if let tileCG = cgImage.cropping(to: rect),
-                   let up = upscaleTile(tileCG, model: model),
-                   let final = trimAndScale(up,
-                                            tileX: ox, tileY: oy,
-                                            tileW: tileW, tileH: tileH,
-                                            imageW: width, imageH: height,
-                                            scale: scale) {
-                    // final already positioned to the correct output rect.
-                    let dstX = (ox + (ox > 0 ? overlap : 0)) * scale.rawValue
-                    let dstY = (oy + (oy > 0 ? overlap : 0)) * scale.rawValue
-                    context.draw(final, in: CGRect(x: dstX, y: dstY,
-                                                   width: final.width, height: final.height))
-                }
-
-                ox += step
-            }
-            oy += step
+        // Tiny dimension: pad that axis once so the window math always has 512.
+        let pw = max(width, tileSize)
+        let ph = max(height, tileSize)
+        let padded: CGImage
+        if width < tileSize || height < tileSize {
+            padded = padToSize(src, width: pw, height: ph) ?? src
+        } else {
+            padded = src
         }
 
+        // Window origins. The last tile is right/bottom-aligned so it is always a
+        // full 512×512 — no per-tile padding needed, and coverage is exact.
+        var origins: [Int] = []
+        var o = 0
+        while o + tileSize < pw {
+            origins.append(o)
+            o += tileSize - overlap * 2
+        }
+        origins.append(max(0, pw - tileSize))
+        let xs = origins
+        let ys = origins
+
+        for oy in ys {
+            for ox in xs {
+                guard let tile = padded.cropping(to: CGRect(x: ox, y: oy, width: tileSize, height: tileSize)),
+                      let up = upscaleTile(tile, model: model) else { continue }
+
+                // Region this tile is responsible for, in source coordinates.
+                // Clamped to the REAL image size — the padded area is black fill
+                // and its model output must not leak into the result.
+                let keepX = ox > 0 ? ox + overlap : ox
+                let keepY = oy > 0 ? oy + overlap : oy
+                let keepRight = min(ox + tileSize, width) - (ox + tileSize < width ? overlap : 0)
+                let keepBottom = min(oy + tileSize, height) - (oy + tileSize < height ? overlap : 0)
+                let keepW = keepRight - keepX
+                let keepH = keepBottom - keepY
+                guard keepW > 0, keepH > 0 else { continue }
+
+                // Same region inside the 4x upscaled tile.
+                let sx = (keepX - ox) * 4
+                let sy = (keepY - oy) * 4
+                guard let piece = up.cropping(to: CGRect(x: sx, y: sy,
+                                                         width: keepW * 4, height: keepH * 4)) else { continue }
+
+                // CGContext origin is bottom-left; the tile math above is top-left.
+                let dstX = keepX * 4
+                let dstY = outH - (keepY + keepH) * 4
+                context.draw(piece, in: CGRect(x: dstX, y: dstY, width: keepW * 4, height: keepH * 4))
+            }
+        }
+
+        // For 2x mode the canvas is already at original-size × 2 — ship as-is.
         guard let result = context.makeImage() else { return nil }
         return UIImage(cgImage: result)
     }
 
-    /// Crops the overlap off an upscaled tile and (optionally) halves it for 2x.
-    private static func trimAndScale(_ up: CGImage,
-                                     tileX: Int, tileY: Int,
-                                     tileW: Int, tileH: Int,
-                                     imageW: Int, imageH: Int,
-                                     scale: Scale) -> CGImage? {
-        // In input space, how much to trim from each side (0 at image edges).
-        let trimLeft = tileX > 0 ? overlap : 0
-        let trimTop = tileY > 0 ? overlap : 0
-        let trimRight = (tileX + tileW < imageW) ? overlap : 0
-        let trimBottom = (tileY + tileH < imageH) ? overlap : 0
-
-        // In upscaled (4x) space.
-        let sx = trimLeft * 4
-        let sy = trimTop * 4
-        let sw = (tileW - trimLeft - trimRight) * 4
-        let sh = (tileH - trimTop - trimBottom) * 4
-        guard sw > 0, sh > 0 else { return nil }
-
-        guard let cropped = up.cropping(to: CGRect(x: sx, y: sy, width: sw, height: sh)) else {
-            return nil
-        }
-        if scale == .two {
-            return resize(cropped, to: CGSize(width: sw / 2, height: sh / 2))
-        }
-        return cropped
-    }
-
-    /// Runs one tile through the model. Input is expected to be 512×512 RGB.
+    /// Runs one 512×512 tile through the model, returns the 2048×2048 result.
     private static func upscaleTile(_ tile: CGImage, model: MLModel) -> CGImage? {
-        // Resize to exactly 512×512 if the edge tile is smaller.
-        let resized: CGImage
-        if tile.width != tileSize || tile.height != tileSize {
-            resized = padToTile(tile) ?? tile
-        } else {
-            resized = tile
-        }
-
-        guard let input = pixelBuffer(from: resized) else { return nil }
+        guard let input = pixelBuffer(from: tile) else { return nil }
 
         do {
             let inputValue = MLFeatureValue(pixelBuffer: input)
@@ -160,26 +156,32 @@ enum AIEnhancer {
                   let outBuffer = outValue.imageBufferValue else { return nil }
 
             let ci = CIImage(cvPixelBuffer: outBuffer)
-            let context = CIContext(options: [.useSoftwareRenderer: false])
-            guard let cg = context.createCGImage(ci, from: ci.extent) else { return nil }
+            guard let cg = sharedCIContext.createCGImage(ci, from: ci.extent) else { return nil }
             return cg
         } catch {
             return nil
         }
     }
 
+    private static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
+
     // MARK: - Helpers
 
-    /// Pads an edge tile to a full 512×512 so the model accepts it.
-    private static func padToTile(_ tile: CGImage) -> CGImage? {
+    /// Pads an image so both axes are at least 512, anchored top-left, with
+    /// black fill for the empty region (black blends into manga gutters).
+    private static func padToSize(_ tile: CGImage, width: Int, height: Int) -> CGImage? {
         guard let context = CGContext(
-            data: nil, width: tileSize, height: tileSize,
-            bitsPerComponent: 8, bytesPerRow: tileSize * 4,
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.interpolationQuality = .high
-        context.draw(tile, in: CGRect(x: 0, y: 0, width: tile.width, height: tile.height))
+        // CGContext origin is bottom-left — anchor the image to the TOP-left.
+        context.draw(tile, in: CGRect(x: 0, y: CGFloat(height - tile.height),
+                                      width: tile.width, height: tile.height))
         return context.makeImage()
     }
 
@@ -221,5 +223,14 @@ enum AIEnhancer {
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
         return context.makeImage()
+    }
+
+    /// Caps the long edge so a page never produces an oversized output bitmap.
+    private static func clampLongEdge(_ image: CGImage, to limit: Int) -> CGImage {
+        let longEdge = max(image.width, image.height)
+        guard longEdge > limit else { return image }
+        let factor = CGFloat(limit) / CGFloat(longEdge)
+        return resize(image, to: CGSize(width: CGFloat(image.width) * factor,
+                                        height: CGFloat(image.height) * factor)) ?? image
     }
 }

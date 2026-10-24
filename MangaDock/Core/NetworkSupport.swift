@@ -3,16 +3,9 @@ import Security
 import SwiftUI
 import UIKit
 
-/// Self-hosted servers (Lucky / 群晖 / 自签证书) fail iOS TLS validation by default.
-/// This is an explicit opt-in switch, off unless the user turns it on.
-enum TrustPolicy {
-    static let defaultsKey = "mangadock.allowSelfSigned"
-
-    static var allowsSelfSigned: Bool {
-        UserDefaults.standard.bool(forKey: defaultsKey)
-    }
-}
-
+/// Standard TLS validation for all requests. Servers with self-signed
+/// certificates are rejected by design — the WebDAV endpoint (fnconnect) and
+/// public comic sites all use properly signed certificates.
 final class TLSTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     /// Session-level challenge.
     func urlSession(_ session: URLSession,
@@ -36,11 +29,6 @@ final class TLSTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelega
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust else {
             completionHandler(.performDefaultHandling, nil)
-            return
-        }
-
-        if TrustPolicy.allowsSelfSigned {
-            completionHandler(.useCredential, URLCredential(trust: trust))
             return
         }
 
