@@ -47,6 +47,7 @@ struct ReaderView: View {
         .onChange(of: model.index) { newValue in
             guard model.pageCount > 0 else { return }
             saveProgress(page: min(newValue, model.pageCount - 1))
+            model.prewarm(from: newValue + 1)
         }
         .onDisappear {
             guard model.pageCount > 0 else { return }

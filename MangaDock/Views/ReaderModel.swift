@@ -211,7 +211,17 @@ final class ReaderModel: ObservableObject {
         // Two cache slots per page: plain and enhanced, so toggling is instant.
         let key = NSNumber(value: position * 2 + (enhance ? 1 : 0))
         if let cached = imageCache.object(forKey: key) { return cached }
+        return await preparePage(position)
+    }
+
+    /// Decodes + enhances a page and stores it in the cache. Used both for the
+    /// visible page and for background pre-rendering of upcoming pages.
+    @discardableResult
+    private func preparePage(_ position: Int) async -> UIImage? {
         guard let source, position >= 0, position < source.pageCount else { return nil }
+
+        let key = NSNumber(value: position * 2 + (enhance ? 1 : 0))
+        if let cached = imageCache.object(forKey: key) { return cached }
 
         do {
             let data = try await source.pageData(at: position)
@@ -246,6 +256,24 @@ final class ReaderModel: ObservableObject {
             return decoded
         } catch {
             return nil
+        }
+    }
+
+    /// Background pre-renders the next few pages so turning the page is instant.
+    /// Only meaningful when AI enhancement is on (that's the slow path); the GPU
+    /// pipeline is already fast enough that pre-warming would just waste power.
+    func prewarm(from index: Int, count: Int = 2) {
+        guard enhance, ImageEnhancer.hasAIModel, pageCount > 0 else { return }
+        let end = min(pageCount, index + count)
+        guard index < end else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            for position in index..<end {
+                let key = NSNumber(value: position * 2 + 1)  // enhanced slot
+                guard self.imageCache.object(forKey: key) == nil else { continue }
+                await self.preparePage(position)
+            }
         }
     }
 
