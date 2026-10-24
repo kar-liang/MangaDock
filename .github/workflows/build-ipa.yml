@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -63,19 +66,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Publish Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="v${VERSION}"
-          # 老版 gh 不支持 --cleanup-tag，先删同名 release（连 tag 一起删）再重建。
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release delete "$TAG" --yes
-          fi
-          gh release create "$TAG" MangaDock.ipa \
-            --title "MangaDock ${VERSION}" \
-            --notes "自动构建产物（由 Build IPA workflow 生成）。下载 MangaDock.ipa 用 SideStore / AltStore / LiveContainer 侧载，要求 iOS 18+。" \
-            --latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: MangaDock ${{ steps.version.outputs.version }}
+          body: 自动构建产物（由 Build IPA workflow 生成）。下载 MangaDock.ipa 用 SideStore / AltStore / LiveContainer 侧载，要求 iOS 18+。
+          files: MangaDock.ipa
+          overwrite: true
 
       - name: Upload build log on failure
         if: failure()
