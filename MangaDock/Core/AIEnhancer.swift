@@ -147,7 +147,7 @@ enum AIEnhancer {
         guard let input = pixelBuffer(from: resized) else { return nil }
 
         do {
-            guard let inputValue = MLFeatureValue(pixelBuffer: input) else { return nil }
+            let inputValue = MLFeatureValue(pixelBuffer: input)
             let output = try model.prediction(from: MLDictionaryFeatureProvider(
                 dictionary: ["input": inputValue]
             ))
