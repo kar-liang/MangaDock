@@ -17,8 +17,12 @@ enum AIEnhancer {
         var title: String { self == .two ? "2 倍" : "4 倍" }
     }
 
-    /// The model lives in the bundle as a compiled `.mlpackage`.
-    static let modelURL: URL? = Bundle.main.url(forResource: "SuperResolution", withExtension: "mlpackage")
+    /// Xcode compiles `.mlpackage` sources into `.mlmodelc` inside the bundle,
+    /// so the compiled artifact is what ships. Fall back to the raw package
+    /// (loaded + compiled at runtime) just in case.
+    static let modelURL: URL? =
+        Bundle.main.url(forResource: "SuperResolution", withExtension: "mlmodelc")
+        ?? Bundle.main.url(forResource: "SuperResolution", withExtension: "mlpackage")
 
     static var isAvailable: Bool { modelURL != nil }
 
