@@ -149,10 +149,23 @@ struct ServerSettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     Toggle("默认开启画质增强", isOn: $enhanceDefault)
+
+                    if ImageEnhancer.hasAIModel {
+                        Picker("AI 超分倍数", selection: Binding(
+                            get: { ImageEnhancer.aiScale.rawValue },
+                            set: { ImageEnhancer.aiScale = AIEnhancer.Scale(rawValue: $0) ?? .two }
+                        )) {
+                            ForEach(AIEnhancer.Scale.allCases, id: \.rawValue) { scale in
+                                Text(scale.title).tag(scale.rawValue)
+                            }
+                        }
+                    }
                 } header: {
                     Text("图像增强")
                 } footer: {
-                    Text("增强在本地 GPU 上跑：2 倍 Lanczos 上采样 + 锐化，对低分辨率扫描件效果明显。\n真·AI 超分 / 上色需要模型本体（Core ML 或云端接口），App 里没有内置模型时不会假装有。")
+                    Text(ImageEnhancer.hasAIModel
+                         ? "已内置 Real-ESRGAN 动漫超分模型。开启增强后：先跑 GPU 快速增强，再叠加 AI 超分重建细节，一页约需数秒。4 倍细节更丰富但更慢、更占内存。"
+                         : "增强在本地 GPU 上跑：2 倍 Lanczos 上采样 + 锐化，对低分辨率扫描件效果明显。未内置 AI 模型。")
                 }
 
                 Section {

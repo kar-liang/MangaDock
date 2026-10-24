@@ -5,26 +5,33 @@ import CoreImage.CIFilterBuiltins
 
 /// Local image enhancement for low-resolution scans.
 ///
-/// This is a GPU pipeline (Lanczos upscale + unsharp mask), not a learned model —
-/// it sharpens line art and hides upscaling blur, but it cannot invent detail the
-/// way a super-resolution network can. `ImageEnhancer.coreMLModelURL` is where a
-/// drop-in Core ML super-resolution model would be picked up.
+/// Two engines, picked automatically:
+/// - `AIEnhancer` (Real-ESRGAN, Core ML) when the model is bundled — real detail
+///   reconstruction, slow (seconds per page).
+/// - A GPU pipeline (Lanczos upscale + unsharp mask) as the always-on fallback —
+///   instant, but it cannot invent detail.
 enum ImageEnhancer {
     static let maxOutputPixel: CGFloat = 3_000
 
     private static let context: CIContext = CIContext(options: [.useSoftwareRenderer: false])
 
-    /// A compiled Core ML model named `SuperResolution.mlmodelc` inside the bundle
-    /// would light this up. Nil means we fall back to the GPU pipeline.
-    static var coreMLModelURL: URL? {
-        Bundle.main.url(forResource: "SuperResolution", withExtension: "mlmodelc")
+    /// Whether the Real-ESRGAN Core ML model is bundled.
+    static var hasAIModel: Bool { AIEnhancer.isAvailable }
+
+    static var engineDescription: String { AIEnhancer.engineDescription }
+
+    /// Preferred AI scale, persisted in settings.
+    static var aiScale: AIEnhancer.Scale {
+        get {
+            let raw = UserDefaults.standard.integer(forKey: "mangadock.aiScale")
+            return AIEnhancer.Scale(rawValue: raw == 4 ? 4 : 2) ?? .two
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "mangadock.aiScale") }
     }
 
-    static var engineDescription: String {
-        if coreMLModelURL != nil {
-            return "Core ML 超分模型（已安装）"
-        }
-        return "GPU 增强（Lanczos 2x + 锐化），未安装 AI 模型"
+    /// Async AI path; the caller decides whether to use it.
+    static func enhanceAI(_ image: UIImage) async -> UIImage? {
+        await AIEnhancer.enhance(image, scale: aiScale)
     }
 
     static func enhance(_ image: UIImage) -> UIImage? {

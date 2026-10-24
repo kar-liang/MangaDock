@@ -48,23 +48,23 @@
 第 3 步要求服务器支持 `Range` 请求（nginx dav、Alist、群晖都支持）。服务器不支持时会退化成
 带书名和文件大小的占位卡片，**不会**为了显示封面去下载整本。封面缓存在 `Caches/MangaDock/covers`。
 
-## 画质增强：现在是什么，AI 差在哪
+## 画质增强：GPU 快速增强 + AI 超分
 
-`ImageEnhancer` 目前是 **GPU 管线**：2 倍 Lanczos 上采样（输出封顶 3000px）+ unsharp mask 锐化，
-跑在 `CIContext` 上，一页几十毫秒。对低分辨率扫描件、被压缩过的老资源有效，**但它不会生成原本不存在的细节**。
+两层引擎，自动配合：
 
-真·AI 超分需要模型本体。接入点已经留好：
+**1. GPU 快速增强（默认，实时）**：`ImageEnhancer` 的 2 倍 Lanczos 上采样（输出封顶 3000px）+ unsharp 锐化，
+跑在 `CIContext` 上，一页几十毫秒。对低清扫描件有效，但不生成新细节。
 
-```swift
-// Core/ImageEnhancer.swift
-static var coreMLModelURL: URL? {
-    Bundle.main.url(forResource: "SuperResolution", withExtension: "mlmodelc")
-}
-```
+**2. AI 超分（已内置 Real-ESRGAN）**：内置 `RealESRGAN_x4plus_anime_6B`（Core ML，ML Program fp16，约 8 MB，
+BSD-3-Clause 授权，专为动漫/漫画训练）。开启增强后，先在 GPU 管线上快速增强，再叠加 AI 超分重建细节。
 
-把编译好的 Core ML 超分模型命名为 `SuperResolution.mlmodelc` 放进 target，重新构建即生效，
-设置页的「当前引擎」会自动变成「Core ML 超分模型（已安装）」。候选模型方向：waifu2x / Real-ESRGAN
-的 anime 版（对线稿友好，通用照片模型对漫画网点纸效果差）。体积通常 +20~60MB，推理一页约 0.5~3 秒。
+AI 超分走**分块（tile）推理**：模型输入固定 512×512，大图切成重叠方块逐块超分再拼接，重叠区裁剪消除接缝。
+输出倍数可选 2 倍 / 4 倍（设置页），一页约数秒（4 倍更慢、更占内存）。
+
+模型放在 `MangaDock/Resources/SuperResolution.mlpackage`，`AIEnhancer.swift` 负责加载与推理。
+授权文件（`LICENSE.txt` / `ATTRIBUTION.txt`）随包分发，模型权重来自
+[Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)（Xintao Wang 等，BSD-3-Clause），
+Core ML 转换来自 [archwiz-upscalers](https://huggingface.co/ddutchie/archwiz-upscalers)。
 
 **AI 上色**没有内置。原因很直接：它同样依赖模型（漫画上色专用 GAN 或云端接口），而且对黑白线稿的
 上色质量在手机端普遍不稳，一页要几秒到几十秒。要做的话优先走云端接口（可插拔 provider + 你自己的 API key），
@@ -141,4 +141,5 @@ ZIP 解析是自己写的（`Core/ZipArchive.swift`），只依赖系统 `Compre
 | 1.3.4 | 修复条漫往回滚时跳回第一页（页面高度按纵横比固定，不再随加载抖动） |
 | 1.3.5 | 书架与 WebDAV 目录分离（4 个标签）、长按加入书架、书架封面 + 章节列表 |
 | 1.4.0 | 从 1.3.5 重建基线：可选「信任自签名证书」、网络报错人话化、TLS 信任双级回调、连接诊断、可清除 WebDAV 配置、接入在线漫画 by URL（单话解析 + 目录页多话解析 + 进度记忆） |
+| 1.5.0 | 内置 Real-ESRGAN 动漫超分模型（AI 画质增强，2x/4x 可选） |
 

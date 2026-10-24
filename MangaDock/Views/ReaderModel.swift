@@ -221,6 +221,20 @@ final class ReaderModel: ObservableObject {
                 guard wantsEnhance else { return base }
                 return ImageEnhancer.enhance(base) ?? base
             }.value
+
+            // With the AI model bundled, super-resolve asynchronously on top of the
+            // GPU pipeline result (or the raw base). This is slow — seconds per page —
+            // so it runs only when enhance is on and the model exists.
+            if wantsEnhance, ImageEnhancer.hasAIModel, let decoded,
+               let ai = await ImageEnhancer.enhanceAI(decoded) {
+                imageCache.setObject(ai, forKey: key)
+                let size = ai.size
+                if size.height > 0 {
+                    pageAspects[position] = size.width / size.height
+                }
+                return ai
+            }
+
             if let decoded {
                 imageCache.setObject(decoded, forKey: key)
                 let size = decoded.size
