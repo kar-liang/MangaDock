@@ -59,6 +59,7 @@ targets:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: 漫画坞需要访问局域网中的 WebDAV 服务器来读取你的漫画文件。
         NSPhotoLibraryAddUsageDescription: 用于保存你从漫画里分享的页面。
+        NSFaceIDUsageDescription: 用于解锁隐私空间，验证是你本人后才会显示隐藏的漫画。
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false

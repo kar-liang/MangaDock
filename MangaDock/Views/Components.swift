@@ -71,6 +71,12 @@ struct ShelfMenu: View {
             Label(onShelf ? "移出书架" : "加入书架",
                   systemImage: onShelf ? "minus.circle" : "plus.circle")
         }
+
+        Button {
+            PrivacyStore.shared.hide(item)
+        } label: {
+            Label("隐藏进隐私空间", systemImage: "lock")
+        }
     }
 }
 

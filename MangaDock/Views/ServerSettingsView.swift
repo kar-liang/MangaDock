@@ -185,6 +185,21 @@ struct ServerSettingsView: View {
                     Text("缓存的是下载过的 CBZ、看过的散图和网格封面，清掉不影响服务器上的文件。")
                 }
 
+                Section {
+                    NavigationLink(destination: PrivateShelfView()) {
+                        HStack {
+                            Label("隐私空间", systemImage: "lock")
+                            Spacer()
+                            Text("\(PrivacyStore.shared.count)")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("隐私")
+                } footer: {
+                    Text("长按书架上的漫画选「隐藏进隐私空间」，进来需要 FaceID 或设备密码。")
+                }
+
                 Section("关于") {
                     LabeledContent("版本", value: Self.appVersion)
                     LabeledContent("支持格式", value: "CBZ / ZIP / PDF / 图片文件夹")
