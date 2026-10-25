@@ -314,6 +314,9 @@ final class DownloadStore: ObservableObject {
                                                      to: destination)
                     reusedCache = true
                     progress[key] = 1
+                    // The download is now the durable copy; drop the cache one
+                    // so a 500 MB series isn't stored twice.
+                    CacheManager.removeArchive(for: item.url)
                 } catch {
                     reusedCache = false
                 }
@@ -361,8 +364,10 @@ final class DownloadStore: ObservableObject {
             if let cached = CacheManager.pageData(for: image.url) {
                 data = cached
             } else {
+                // Deliberately NOT stored in the page cache: the durable copy
+                // below is what gets read (offline-first), so caching it too
+                // would just double the disk cost of every downloaded series.
                 data = try await client.data(for: image.url)
-                CacheManager.storePage(data, for: image.url)
             }
 
             let ext = image.fileExtension.isEmpty ? "jpg" : image.fileExtension
