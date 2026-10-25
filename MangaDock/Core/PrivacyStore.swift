@@ -10,6 +10,10 @@ final class PrivacyStore: ObservableObject {
     static let shared = PrivacyStore()
 
     @Published private(set) var entries: [ShelfEntry] = []
+    /// Session-level unlock flag. Lives on the singleton (NOT view-local
+    /// @State) because SwiftUI can rebuild the private-shelf view at any time,
+    /// which reset local state and re-triggered FaceID in a loop.
+    @Published var unlocked = false
 
     private let key = "mangadock.privateShelf"
     private let defaults = UserDefaults.standard
@@ -68,19 +72,22 @@ final class PrivacyStore: ObservableObject {
     static func authenticate() async -> Bool {
         let context = LAContext()
         var error: NSError?
+        var success = false
 
         if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
-            return (try? await context.evaluatePolicy(
+            success = (try? await context.evaluatePolicy(
                 .deviceOwnerAuthenticationWithBiometrics,
+                localizedReason: "解锁隐私空间")) ?? false
+        } else if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
+            // No biometrics enrolled — fall back to the device passcode.
+            success = (try? await context.evaluatePolicy(
+                .deviceOwnerAuthentication,
                 localizedReason: "解锁隐私空间")) ?? false
         }
 
-        // No biometrics enrolled — fall back to the device passcode.
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            return false
+        if success {
+            PrivacyStore.shared.unlocked = true
         }
-        return (try? await context.evaluatePolicy(
-            .deviceOwnerAuthentication,
-            localizedReason: "解锁隐私空间")) ?? false
+        return success
     }
 }

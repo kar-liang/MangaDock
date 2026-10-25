@@ -4,12 +4,11 @@ import SwiftUI
 struct PrivateShelfView: View {
     @ObservedObject private var privacy = PrivacyStore.shared
 
-    @State private var unlocked = false
     @State private var failed = false
 
     var body: some View {
         Group {
-            if unlocked {
+            if privacy.unlocked {
                 List {
                     if privacy.entries.isEmpty {
                         Text("隐私空间是空的。\n长按书架上的漫画选「隐藏进隐私空间」放进来。")
@@ -54,8 +53,9 @@ struct PrivateShelfView: View {
         }
         .task {
             // `.task` re-runs every time this view re-appears (e.g. popping back
-            // from the reader), which used to re-trigger FaceID in a loop.
-            guard !unlocked else { return }
+            // from the reader). The unlock flag lives on the singleton, so once
+            // authenticated this session stays unlocked.
+            guard !privacy.unlocked else { return }
             await authenticate()
         }
     }
@@ -70,7 +70,8 @@ struct PrivateShelfView: View {
 
     private func authenticate() async {
         if await PrivacyStore.authenticate() {
-            withAnimation { unlocked = true }
+            // PrivacyStore.authenticate() sets the singleton's unlocked flag;
+            // the @ObservedObject update re-renders this view automatically.
         } else {
             failed = true
         }
