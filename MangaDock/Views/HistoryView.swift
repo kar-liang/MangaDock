@@ -59,6 +59,10 @@ struct HistoryView: View {
                     SeriesView(folder: item)
                 case .comic(let item):
                     ReaderView(item: item)
+                case .privateShelf:
+                    PrivateShelfView()
+                case .localLibrary:
+                    LocalLibraryView()
                 }
             }
             .confirmationDialog("清空全部阅读记录？", isPresented: $showClearConfirm, titleVisibility: .visible) {
