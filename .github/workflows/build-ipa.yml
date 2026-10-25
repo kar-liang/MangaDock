@@ -72,7 +72,7 @@ jobs:
           name: MangaDock ${{ steps.version.outputs.version }}
           body: 自动构建产物（由 Build IPA workflow 生成）。下载 MangaDock.ipa 用 SideStore / AltStore / LiveContainer 侧载，要求 iOS 18+。
           files: MangaDock.ipa
-          overwrite: true
+          overwrite_files: true
 
       - name: Upload build log on failure
         if: failure()
