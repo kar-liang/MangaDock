@@ -27,6 +27,7 @@ struct SyncPayload: Codable {
     var updatedAt: Date
 }
 
+@MainActor
 enum SyncService {
     static let fileName = ".mangadock-sync.json"
 
