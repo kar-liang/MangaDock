@@ -24,7 +24,9 @@ final class ReaderModel: ObservableObject {
     @Published var downloadProgress: Double? = nil
     @Published var errorMessage: String? = nil
     @Published var chapterError: String? = nil
-    @Published var enhance: Bool = UserDefaults.standard.bool(forKey: enhanceDefaultsKey)
+    @Published var enhance: Bool = false
+    /// Per-comic AI scale (2 or 4), defaulting to the global setting.
+    @Published var aiScale: Int = 2
     /// Bumped whenever the enhance mode (on/off or 2x/4x) changes, so visible
     /// pages know to drop their decoded image and re-render.
     @Published private(set) var enhanceGeneration = 0
@@ -76,11 +78,12 @@ final class ReaderModel: ObservableObject {
     /// Toolbar entry: turns enhancement on/off and optionally picks the AI scale.
     /// Bumps `enhanceGeneration` so visible pages re-render with the new mode.
     func setEnhance(on: Bool, scale: AIEnhancer.Scale? = nil) {
-        let changed = on != enhance || (scale != nil && scale != ImageEnhancer.aiScale)
+        let changed = on != enhance || (scale != nil && scale!.rawValue != aiScale)
         guard changed else { return }
         enhance = on
-        if let scale { ImageEnhancer.aiScale = scale }
-        UserDefaults.standard.set(enhance, forKey: enhanceDefaultsKey)
+        if let scale { aiScale = scale.rawValue }
+        PerComicPrefs.setEnhance(on, for: currentItem.url)
+        PerComicPrefs.setAIScale(aiScale, for: currentItem.url)
         imageCache.removeAllObjects()
         enhanceGeneration += 1
         prewarm(from: index + 1)
@@ -203,6 +206,11 @@ final class ReaderModel: ObservableObject {
         imageCache.removeAllObjects()
         downloadProgress = nil
         chapterError = nil
+        // Per-comic enhance/scale, falling back to the global defaults.
+        enhance = PerComicPrefs.enhanceEnabled(for: item.url,
+                                               default: UserDefaults.standard.bool(forKey: enhanceDefaultsKey))
+        aiScale = PerComicPrefs.aiScale(for: item.url,
+                                        default: ImageEnhancer.aiScale.rawValue)
     }
 
     // MARK: - Chapter switching
@@ -310,7 +318,7 @@ final class ReaderModel: ObservableObject {
             // AI super-resolution on top of the clean decode. Slow (seconds per
             // page) — acceptable because it only runs when enhance is on.
             if useAI, let decoded,
-               let ai = await ImageEnhancer.enhanceAI(decoded) {
+               let ai = await ImageEnhancer.enhanceAI(decoded, scale: AIEnhancer.Scale(rawValue: aiScale) ?? .two) {
                 imageCache.setObject(ai, forKey: key)
                 let size = ai.size
                 if size.height > 0 {

@@ -20,7 +20,6 @@ struct ServerSettingsView: View {
     @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
     @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
-    @AppStorage("mangadock.shelfLayout") private var shelfLayoutRaw = LayoutMode.grid.rawValue
     @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
     @AppStorage("mangadock.tab.files") private var showFilesTab = true
     @AppStorage("mangadock.tab.history") private var showHistoryTab = false
@@ -76,10 +75,6 @@ struct ServerSettingsView: View {
                         }
                     }
                     Picker("新目录默认视图", selection: $defaultLayoutRaw) {
-                        Text("网格").tag(LayoutMode.grid.rawValue)
-                        Text("列表").tag(LayoutMode.list.rawValue)
-                    }
-                    Picker("书架视图", selection: $shelfLayoutRaw) {
                         Text("网格").tag(LayoutMode.grid.rawValue)
                         Text("列表").tag(LayoutMode.list.rawValue)
                     }

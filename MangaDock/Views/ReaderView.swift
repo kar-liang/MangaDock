@@ -360,12 +360,12 @@ struct ReaderView: View {
     }
 
     private func isEnhance(_ scale: AIEnhancer.Scale) -> Bool {
-        model.enhance && ImageEnhancer.aiScale == scale
+        model.enhance && model.aiScale == scale.rawValue
     }
 
     private var enhanceBadgeText: String {
         guard ImageEnhancer.hasAIModel else { return "增强" }
-        return "AI \(ImageEnhancer.aiScale.rawValue)x"
+        return "AI \(model.aiScale)x"
     }
 
     private func pagingButton(_ name: String, action: @escaping () -> Void) -> some View {

@@ -9,8 +9,6 @@ struct SyncSettings: Codable, Equatable {
     var appearance: String?
     var readerMode: String?
     var defaultLayout: String?
-    var shelfLayout: String?
-    var chapterOrder: String?
     var enhance: Bool?
     var tabShelf: Bool?
     var tabFiles: Bool?
@@ -57,8 +55,6 @@ enum SyncService {
             appearance: d.string(forKey: "mangadock.appearance"),
             readerMode: d.string(forKey: "mangadock.readerMode"),
             defaultLayout: d.string(forKey: "mangadock.defaultLayout"),
-            shelfLayout: d.string(forKey: "mangadock.shelfLayout"),
-            chapterOrder: d.string(forKey: "mangadock.chapterOrder"),
             enhance: d.object(forKey: "mangadock.enhance") as? Bool,
             tabShelf: d.object(forKey: "mangadock.tab.shelf") as? Bool,
             tabFiles: d.object(forKey: "mangadock.tab.files") as? Bool,
@@ -135,8 +131,6 @@ enum SyncService {
         setStr("mangadock.appearance", s.appearance)
         setStr("mangadock.readerMode", s.readerMode)
         setStr("mangadock.defaultLayout", s.defaultLayout)
-        setStr("mangadock.shelfLayout", s.shelfLayout)
-        setStr("mangadock.chapterOrder", s.chapterOrder)
         if let enhance = s.enhance { d.set(enhance, forKey: "mangadock.enhance") }
         if let tabShelf = s.tabShelf { d.set(tabShelf, forKey: "mangadock.tab.shelf") }
         if let tabFiles = s.tabFiles { d.set(tabFiles, forKey: "mangadock.tab.files") }

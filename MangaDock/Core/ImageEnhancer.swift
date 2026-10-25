@@ -29,9 +29,9 @@ enum ImageEnhancer {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "mangadock.aiScale") }
     }
 
-    /// Async AI path; the caller decides whether to use it.
-    static func enhanceAI(_ image: UIImage) async -> UIImage? {
-        await AIEnhancer.enhance(image, scale: aiScale)
+    /// Async AI path; the caller decides whether to use it and at what scale.
+    static func enhanceAI(_ image: UIImage, scale: AIEnhancer.Scale? = nil) async -> UIImage? {
+        await AIEnhancer.enhance(image, scale: scale ?? aiScale)
     }
 
     static func enhance(_ image: UIImage) -> UIImage? {
