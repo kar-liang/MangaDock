@@ -9,35 +9,40 @@ struct PrivateShelfView: View {
     var body: some View {
         Group {
             if privacy.unlocked {
-                List {
+                ScrollView {
                     if privacy.entries.isEmpty {
-                        Text("隐私空间是空的。\n长按书架上的漫画选「隐藏进隐私空间」放进来。")
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    ForEach(privacy.entries) { entry in
-                        if let item = entry.item, let target = readerTarget(for: item) {
-                            NavigationLink(value: target) {
-                                HStack(spacing: 12) {
-                                    Image(systemName: entry.isDirectory ? "folder" : "book.closed")
-                                        .foregroundColor(.secondary)
-                                        .frame(width: 22)
-                                    Text(item.displayName)
-                                    Spacer()
+                        VStack(spacing: 14) {
+                            Image(systemName: "lock.open")
+                                .font(.system(size: 40, weight: .light))
+                                .foregroundColor(.secondary)
+                            Text("隐私空间是空的。\n长按书架上的漫画选「隐藏进隐私空间」放进来。")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 80)
+                    } else {
+                        LazyVGrid(columns: LibraryGrid.columns, spacing: 16) {
+                            ForEach(privacy.entries) { entry in
+                                if let item = entry.item, let target = readerTarget(for: item) {
+                                    NavigationLink(value: target) {
+                                        CoverTile(item: item)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button("恢复到书架") { privacy.restore(entry) }
+                                        Button("删除", role: .destructive) { privacy.remove(entry) }
+                                    }
                                 }
-                                .padding(.vertical, 2)
-                            }
-                            .contextMenu {
-                                Button("恢复到书架") { privacy.restore(entry) }
-                                Button("删除", role: .destructive) { privacy.remove(entry) }
                             }
                         }
+                        .padding(16)
                     }
                 }
                 .navigationTitle("隐私空间")
-                // No .libraryNavigation() here: the parent (ShelfView) already
-                // registered navigationDestination(for: NavTarget), and a second
-                // registration inside the stack made pushes bounce back.
+                // No .libraryNavigation() here: the parent already registered the
+                // NavTarget destinations; a duplicate registration broke pushes.
             } else {
                 VStack(spacing: 14) {
                     Image(systemName: "lock.fill")

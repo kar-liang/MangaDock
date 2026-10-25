@@ -7,7 +7,6 @@ struct ShelfView: View {
     @ObservedObject private var shelf = ShelfStore.shared
     @ObservedObject private var webComics = WebComicStore.shared
 
-    @State private var mode: LayoutMode = .grid
     @State private var showAddWebComic = false
     @State private var reading: WebComicSource?
     @State private var showingChapters: WebComicSource?
@@ -21,10 +20,8 @@ struct ShelfView: View {
             Group {
                 if isTotallyEmpty {
                     emptyState
-                } else if mode == .grid {
-                    gridContent
                 } else {
-                    listContent
+                    gridContent
                 }
             }
             .navigationTitle("书架")
@@ -43,7 +40,6 @@ struct ShelfView: View {
                 }
             }
             .libraryNavigation()
-            .onAppear { mode = LayoutPreference.shared.shelfMode }
             .sheet(isPresented: $showAddWebComic) {
                 WebComicAddView()
             }
@@ -187,50 +183,6 @@ struct ShelfView: View {
     }
 
     // MARK: - List
-
-    private var listContent: some View {
-        List {
-            if !webComics.sources.isEmpty {
-                Section("在线漫画") {
-                    ForEach(webComics.sources) { source in
-                        Button {
-                            open(source)
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: source.isSeries ? "books.vertical" : "globe")
-                                    .foregroundColor(.accentColor)
-                                    .frame(width: 22)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(source.title).lineLimit(2)
-                                    Text(source.isSeries ? "\(source.chapters.count) 话" : (source.url?.host ?? ""))
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .onDelete { offsets in
-                        for index in offsets.sorted(by: >) where index < webComics.sources.count {
-                            webComics.remove(webComics.sources[index])
-                        }
-                    }
-                }
-            }
-
-            Section {
-                ForEach(shelf.entries) { entry in
-                    if let item = entry.item, let target = target(for: item) {
-                        NavigationLink(value: target) {
-                            ItemRow(item: item)
-                        }
-                        .contextMenu { ShelfMenu(item: item) }
-                    }
-                }
-                .onDelete { shelf.remove(at: $0) }
-            }
-        }
-    }
 
     /// A folder opens the chapter list; a single file goes straight to the reader.
     private func target(for item: WebDAVItem) -> NavTarget? {
