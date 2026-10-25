@@ -89,6 +89,7 @@ final class WebDAVClient: @unchecked Sendable {
             if Self.normalizedPath(itemURL) == selfPath { continue }
             let name = Self.displayName(raw: raw, url: itemURL)
             if name.isEmpty { continue }
+            if name == SyncService.fileName { continue }  // hide the sync payload
             items.append(WebDAVItem(url: itemURL,
                                     name: name,
                                     isDirectory: raw.isDirectory,
@@ -111,6 +112,15 @@ final class WebDAVClient: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
         guard (200...299).contains(http.statusCode) else { throw WebDAVError.badStatus(http.statusCode) }
         return data
+    }
+
+    /// PUT a small file (used for the multi-device sync payload).
+    func upload(_ data: Data, to url: URL) async throws {
+        var request = makeRequest(url: url, method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let (_, response) = try await session.upload(for: request, from: data)
+        guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
+        guard (200...299).contains(http.statusCode) else { throw WebDAVError.badStatus(http.statusCode) }
     }
 
     func download(_ url: URL, to destination: URL,

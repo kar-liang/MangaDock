@@ -35,5 +35,8 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(scheme)
+        .task {
+            await store.pullSync()
+        }
     }
 }

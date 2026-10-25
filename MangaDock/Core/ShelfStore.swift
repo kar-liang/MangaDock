@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
 
+extension Notification.Name {
+    static let shelfDidChange = Notification.Name("mangadock.shelfDidChange")
+}
+
 struct ShelfEntry: Codable, Identifiable, Hashable {
     var urlString: String
     var name: String
@@ -86,10 +90,17 @@ final class ShelfStore: ObservableObject {
         save()
     }
 
+    /// Replaces the whole shelf (used by multi-device sync).
+    func replaceEntries(_ list: [ShelfEntry]) {
+        entries = list
+        save()
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(entries) {
             defaults.set(data, forKey: storageKey)
         }
+        NotificationCenter.default.post(name: .shelfDidChange, object: nil)
     }
 
     private func load() {

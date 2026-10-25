@@ -1,0 +1,125 @@
+import Foundation
+
+/// Multi-device sync via a single JSON file on the WebDAV server.
+///
+/// iCloud/CloudKit needs a signed developer entitlement (unavailable for
+/// sideloaded IPAs), so progress, shelf, and settings sync through the user's
+/// own WebDAV server instead. Last-write-wins, compared by `updatedAt`.
+struct SyncSettings: Codable, Equatable {
+    var appearance: String?
+    var readerMode: String?
+    var defaultLayout: String?
+    var shelfLayout: String?
+    var chapterOrder: String?
+    var enhance: Bool?
+    var tabShelf: Bool?
+    var tabFiles: Bool?
+    var tabHistory: Bool?
+    var aiScale: Int?
+}
+
+struct SyncPayload: Codable {
+    var serverURL: String
+    var username: String
+    var recent: [RecentEntry]
+    var shelf: [ShelfEntry]
+    var settings: SyncSettings
+    var updatedAt: Date
+}
+
+enum SyncService {
+    static let fileName = ".mangadock-sync.json"
+
+    static func syncURL(baseURL: URL) -> URL {
+        baseURL.appendingPathComponent(fileName)
+    }
+
+    // MARK: - Snapshot
+
+    static func currentSettings() -> SyncSettings {
+        let d = UserDefaults.standard
+        return SyncSettings(
+            appearance: d.string(forKey: "mangadock.appearance"),
+            readerMode: d.string(forKey: "mangadock.readerMode"),
+            defaultLayout: d.string(forKey: "mangadock.defaultLayout"),
+            shelfLayout: d.string(forKey: "mangadock.shelfLayout"),
+            chapterOrder: d.string(forKey: "mangadock.chapterOrder"),
+            enhance: d.object(forKey: "mangadock.enhance") as? Bool,
+            tabShelf: d.object(forKey: "mangadock.tab.shelf") as? Bool,
+            tabFiles: d.object(forKey: "mangadock.tab.files") as? Bool,
+            tabHistory: d.object(forKey: "mangadock.tab.history") as? Bool,
+            aiScale: d.integer(forKey: "mangadock.aiScale")
+        )
+    }
+
+    static func payload(store: AppStore, shelf: [ShelfEntry]) -> SyncPayload {
+        SyncPayload(
+            serverURL: store.serverURL,
+            username: store.username,
+            recent: store.recent,
+            shelf: shelf,
+            settings: currentSettings(),
+            updatedAt: Date()
+        )
+    }
+
+    // MARK: - Push / pull
+
+    static func push(store: AppStore, shelf: [ShelfEntry]) async {
+        guard let client = store.makeClient(),
+              let base = store.baseURL else { return }
+        let payload = payload(store: store, shelf: shelf)
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        try? await client.upload(data, to: syncURL(baseURL: base))
+    }
+
+    /// Fetches the remote payload and applies it if it's newer than local.
+    /// Returns true when remote state was applied.
+    @discardableResult
+    static func pull(store: AppStore, shelfStore: ShelfStore) async -> Bool {
+        guard let client = store.makeClient(),
+              let base = store.baseURL else { return false }
+
+        guard let data = try? await client.data(for: syncURL(baseURL: base)),
+              let remote = try? JSONDecoder().decode(SyncPayload.self, from: data) else {
+            return false
+        }
+
+        // Only merge the same server config — never clobber a different server.
+        guard remote.serverURL == store.serverURL else { return false }
+
+        // Last-write-wins.
+        let localUpdated = UserDefaults.standard.object(forKey: "mangadock.sync.updatedAt") as? Date ?? .distantPast
+        guard remote.updatedAt > localUpdated else { return false }
+
+        apply(remote, store: store, shelfStore: shelfStore)
+        UserDefaults.standard.set(remote.updatedAt, forKey: "mangadock.sync.updatedAt")
+        return true
+    }
+
+    private static func apply(_ remote: SyncPayload, store: AppStore, shelfStore: ShelfStore) {
+        // Progress.
+        store.replaceRecent(remote.recent)
+        // Shelf.
+        shelfStore.replaceEntries(remote.shelf)
+        // Settings.
+        applySettings(remote.settings)
+    }
+
+    private static func applySettings(_ s: SyncSettings) {
+        let d = UserDefaults.standard
+        func setStr(_ key: String, _ value: String?) {
+            if let value { d.set(value, forKey: key) } else { d.removeObject(forKey: key) }
+        }
+        setStr("mangadock.appearance", s.appearance)
+        setStr("mangadock.readerMode", s.readerMode)
+        setStr("mangadock.defaultLayout", s.defaultLayout)
+        setStr("mangadock.shelfLayout", s.shelfLayout)
+        setStr("mangadock.chapterOrder", s.chapterOrder)
+        if let enhance = s.enhance { d.set(enhance, forKey: "mangadock.enhance") }
+        if let tabShelf = s.tabShelf { d.set(tabShelf, forKey: "mangadock.tab.shelf") }
+        if let tabFiles = s.tabFiles { d.set(tabFiles, forKey: "mangadock.tab.files") }
+        if let tabHistory = s.tabHistory { d.set(tabHistory, forKey: "mangadock.tab.history") }
+        if let aiScale = s.aiScale { d.set(aiScale, forKey: "mangadock.aiScale") }
+    }
+}

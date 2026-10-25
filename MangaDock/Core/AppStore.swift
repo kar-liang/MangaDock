@@ -26,6 +26,35 @@ final class AppStore: ObservableObject {
         } else {
             recent = []
         }
+
+        // Shelf changes (add/remove) trigger a debounced sync push.
+        NotificationCenter.default.addObserver(
+            forName: .shelfDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleSyncPush()
+            }
+        }
+    }
+
+    // MARK: - Sync
+
+    private var syncTask: Task<Void, Never>?
+
+    /// Debounced push so rapid page turns don't spam the server.
+    func scheduleSyncPush() {
+        guard isConfigured else { return }
+        syncTask?.cancel()
+        syncTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self else { return }
+            await SyncService.push(store: self, shelf: ShelfStore.shared.entries)
+        }
+    }
+
+    func pullSync() async {
+        guard isConfigured else { return }
+        _ = await SyncService.pull(store: self, shelfStore: ShelfStore.shared)
     }
 
     // MARK: - Derived
@@ -113,11 +142,20 @@ final class AppStore: ObservableObject {
         if let data = try? JSONEncoder().encode(list) {
             defaults.set(data, forKey: Keys.recent)
         }
+        scheduleSyncPush()
     }
 
     func removeRecent(_ entry: RecentEntry) {
         recent = recent.filter { $0.urlString != entry.urlString }
         if let data = try? JSONEncoder().encode(recent) {
+            defaults.set(data, forKey: Keys.recent)
+        }
+    }
+
+    /// Replaces the whole recent list (used by multi-device sync).
+    func replaceRecent(_ list: [RecentEntry]) {
+        recent = list
+        if let data = try? JSONEncoder().encode(list) {
             defaults.set(data, forKey: Keys.recent)
         }
     }
