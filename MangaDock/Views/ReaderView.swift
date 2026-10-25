@@ -156,7 +156,7 @@ struct ReaderView: View {
         if overshoot > 30 {
             guard !chapterJumpArmed else { return }
             chapterJumpArmed = true
-            goNextChapter()
+            Task { await goNextChapter() }
         } else if overshoot < 5 {
             chapterJumpArmed = false  // back inside the list: re-arm
         }
