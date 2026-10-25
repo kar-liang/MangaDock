@@ -56,6 +56,33 @@ final class FolderComicSource: ComicPageSource {
     }
 }
 
+/// A downloaded chapter that was originally a WebDAV folder of images. The
+/// images live in one local directory, so pages read straight off disk.
+final class LocalFolderComicSource: ComicPageSource {
+    private let files: [URL]
+    let pageCount: Int
+
+    init(directory: URL) throws {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        )) ?? []
+        let images = urls
+            .filter { PageFiles.isPageFile($0.lastPathComponent) }
+            .sorted { NaturalSort.less($0.lastPathComponent, $1.lastPathComponent) }
+        guard !images.isEmpty else {
+            throw ZipError.unsupported("本地下载目录里没有图片")
+        }
+        self.files = images
+        self.pageCount = images.count
+    }
+
+    func pageData(at index: Int) async throws -> Data {
+        guard index >= 0, index < pageCount else { throw ZipError.corrupt }
+        return try Data(contentsOf: files[index])
+    }
+}
+
 enum PDFComicError: LocalizedError {
     case unreadable
 

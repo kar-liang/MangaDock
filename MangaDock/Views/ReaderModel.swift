@@ -136,11 +136,20 @@ final class ReaderModel: ObservableObject {
 
     /// Sibling chapters come from the parent folder. Same kind only — a folder of
     /// image chapters walks to other folders, a CBZ walks to other CBZ files.
+    /// Offline: when the folder can't be listed, fall back to the chapters that
+    /// were downloaded, so chapter-to-chapter reading still works with no
+    /// network at all.
     private func buildSeries(client: WebDAVClient) async {
         guard let parent = Self.parentURL(of: currentItem.url),
               let children = try? await client.list(parent) else {
-            series = [currentItem]
-            seriesIndex = 0
+            let offline = DownloadStore.shared.downloadedSiblings(of: currentItem)
+            if let index = offline.firstIndex(where: { $0.id == currentItem.id }) {
+                series = offline
+                seriesIndex = index
+            } else {
+                series = [currentItem]
+                seriesIndex = 0
+            }
             return
         }
 
@@ -159,6 +168,16 @@ final class ReaderModel: ObservableObject {
     }
 
     private func prepare(item: WebDAVItem, client: WebDAVClient, silent: Bool = false) async throws -> ComicPageSource {
+        // Offline first: a downloaded chapter reads straight off disk, no
+        // network round-trip and no waiting.
+        if let local = await DownloadStore.shared.localSource(for: item.url) {
+            if !silent {
+                statusText = "正在读取本地下载…"
+                downloadProgress = nil
+            }
+            return local
+        }
+
         if item.isArchive || item.isPDF {
             let cacheURL = CacheManager.archiveURL(for: item.url)
             if !CacheManager.hasArchive(for: item.url) {

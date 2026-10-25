@@ -8,6 +8,7 @@ struct SeriesView: View {
 
     @EnvironmentObject private var store: AppStore
     @StateObject private var loader = FolderLoader()
+    @ObservedObject private var downloads = DownloadStore.shared
     @State private var descending = false
 
     private var chapters: [WebDAVItem] {
@@ -17,6 +18,27 @@ struct SeriesView: View {
 
     private var imageCount: Int {
         loader.items.filter { !$0.isDirectory && $0.isImage }.count
+    }
+
+    /// Chapters of this series that are already on disk.
+    private var downloadedCount: Int {
+        chapters.filter { downloads.isDownloaded($0.url) }.count
+    }
+
+    private var notDownloaded: [WebDAVItem] {
+        chapters.filter { !downloads.isDownloaded($0.url) }
+    }
+
+    /// True while any chapter of this series is queued or in flight.
+    private var downloadingThisSeries: Bool {
+        let keys = Set(chapters.map { $0.url.absoluteString })
+        return downloads.queue.contains { keys.contains($0) }
+    }
+
+    /// Fraction of the chapter currently in flight.
+    private var currentFraction: Double {
+        guard let key = downloads.queue.first else { return 0 }
+        return downloads.progress[key] ?? 0
     }
 
     /// Most recently read chapter of this series, if any.
@@ -40,7 +62,10 @@ struct SeriesView: View {
                 ErrorStateView(message: error) {
                     Task { await reload() }
                 }
+                offlineSection
             } else {
+                downloadStatusSection
+
                 if let resume = resumeItem {
                     Section {
                         NavigationLink(value: NavTarget.comic(resume.item)) {
@@ -63,13 +88,14 @@ struct SeriesView: View {
                 if !chapters.isEmpty {
                     Section {
                         ForEach(chapters) { chapter in
-                            NavigationLink(value: NavTarget.comic(chapter)) {
-                                ChapterRow(item: chapter,
-                                           progress: store.recentEntry(for: chapter.url))
-                            }
+                            chapterRow(chapter)
                         }
                     } header: {
                         Text("章节（\(chapters.count)）")
+                    } footer: {
+                        if downloadedCount > 0 {
+                            Text("已下载 \(downloadedCount) 章，没网也能看。左滑章节可以单独下载或删除。")
+                        }
                     }
                 }
 
@@ -91,7 +117,8 @@ struct SeriesView: View {
         .navigationTitle(folder.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                downloadMenu
                 Button {
                     descending.toggle()
                     PerComicPrefs.setChapterOrder(descending, for: folder.url)
@@ -108,6 +135,190 @@ struct SeriesView: View {
         .refreshable { await reload() }
     }
 
+    // MARK: - Rows
+
+    @ViewBuilder
+    private func chapterRow(_ chapter: WebDAVItem) -> some View {
+        let state = downloads.state(for: chapter.url)
+
+        NavigationLink(value: NavTarget.comic(chapter)) {
+            ChapterRow(item: chapter,
+                       progress: store.recentEntry(for: chapter.url),
+                       download: state)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if state == .done {
+                Button(role: .destructive) {
+                    downloads.remove(chapter.url)
+                } label: {
+                    Label("删除下载", systemImage: "trash")
+                }
+            } else if state == .none {
+                Button {
+                    enqueue([chapter])
+                } label: {
+                    Label("下载", systemImage: "arrow.down.circle")
+                }
+                .tint(.blue)
+            } else {
+                Button {
+                    downloads.cancel(chapter.url)
+                } label: {
+                    Label("取消下载", systemImage: "xmark.circle")
+                }
+                .tint(.orange)
+            }
+        }
+        .contextMenu {
+            if state == .done {
+                Button(role: .destructive) {
+                    downloads.remove(chapter.url)
+                } label: {
+                    Label("删除下载", systemImage: "trash")
+                }
+            } else if state == .none {
+                Button {
+                    enqueue([chapter])
+                } label: {
+                    Label("下载这一章", systemImage: "arrow.down.circle")
+                }
+            } else {
+                Button {
+                    downloads.cancel(chapter.url)
+                } label: {
+                    Label("取消下载", systemImage: "xmark.circle")
+                }
+            }
+        }
+    }
+
+    // MARK: - Download status
+
+    /// Offline fallback: when the folder can't be listed, still offer whatever
+    /// was downloaded from it. Without this a connection failure would lock
+    /// you out of chapters that are sitting on the phone.
+    @ViewBuilder
+    private var offlineSection: some View {
+        let saved = downloads.downloadedChapters(inFolder: folder.url)
+        if !saved.isEmpty {
+            Section {
+                ForEach(saved) { rec in
+                    if let item = rec.item {
+                        NavigationLink(value: NavTarget.comic(item)) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .foregroundColor(.green)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(rec.title).lineLimit(2)
+                                    Text("\(rec.pageCount) 页 · \(rec.formattedSize)")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                if let url = rec.sourceURL { downloads.remove(url) }
+                            } label: {
+                                Label("删除下载", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("已下载（\(saved.count)）")
+            } footer: {
+                Text("连不上服务器时，这些存在手机上的章节照样能看。")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var downloadStatusSection: some View {
+        if downloadingThisSeries {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(downloads.activeTitle ?? "准备中…")
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(Int(currentFraction * 100))%")
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(.secondary)
+                    }
+                    if downloads.queue.count > 1 {
+                        Text("队列还有 \(downloads.queue.count - 1) 章")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    ProgressView(value: currentFraction)
+                        .progressViewStyle(.linear)
+                }
+                .padding(.vertical, 2)
+
+                Button("取消下载", role: .destructive) {
+                    downloads.cancelAll()
+                }
+            } header: {
+                Text("正在下载")
+            }
+        } else if let error = downloads.lastError {
+            Section {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var downloadMenu: some View {
+        Menu {
+            Button {
+                enqueue(notDownloaded)
+            } label: {
+                Label("下载全部章节（\(notDownloaded.count)）",
+                      systemImage: "arrow.down.circle")
+            }
+            .disabled(notDownloaded.isEmpty)
+
+            if downloads.isBusy {
+                Button(role: .destructive) {
+                    downloads.cancelAll()
+                } label: {
+                    Label("取消下载", systemImage: "xmark.circle")
+                }
+            }
+
+            if downloadedCount > 0 {
+                Button(role: .destructive) {
+                    downloadedChapters.forEach { downloads.remove($0.url) }
+                } label: {
+                    Label("删除已下载（\(downloadedCount) 章）", systemImage: "trash")
+                }
+            }
+        } label: {
+            Image(systemName: downloadedCount > 0 ? "arrow.down.circle.fill" : "arrow.down.circle")
+        }
+        .disabled(chapters.isEmpty)
+        .accessibilityLabel("下载")
+    }
+
+    private var downloadedChapters: [WebDAVItem] {
+        chapters.filter { downloads.isDownloaded($0.url) }
+    }
+
+    // MARK: - Actions
+
+    private func enqueue(_ items: [WebDAVItem]) {
+        guard !items.isEmpty, let client = store.makeClient() else { return }
+        downloads.enqueue(items, client: client)
+    }
+
     private func reload() async {
         await loader.load(url: folder.requestURL, client: store.makeClient())
     }
@@ -116,6 +327,7 @@ struct SeriesView: View {
 private struct ChapterRow: View {
     let item: WebDAVItem
     let progress: RecentEntry?
+    let download: DownloadState
 
     var body: some View {
         HStack(spacing: 12) {
@@ -134,8 +346,30 @@ private struct ChapterRow: View {
             }
 
             Spacer()
+
+            downloadBadge
         }
         .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var downloadBadge: some View {
+        switch download {
+        case .none:
+            EmptyView()
+        case .done:
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundColor(.green)
+                .accessibilityLabel("已下载")
+        case .queued:
+            Image(systemName: "clock")
+                .foregroundColor(.secondary)
+                .accessibilityLabel("等待下载")
+        case .downloading(let value):
+            Text("\(Int(value * 100))%")
+                .font(.caption2.monospacedDigit())
+                .foregroundColor(.secondary)
+        }
     }
 
     private var iconName: String {

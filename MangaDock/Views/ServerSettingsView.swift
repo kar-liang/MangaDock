@@ -4,6 +4,7 @@ struct ServerSettingsView: View {
     let initialSetup: Bool
 
     @EnvironmentObject private var store: AppStore
+    @ObservedObject private var downloads = DownloadStore.shared
 
     @State private var serverURL = ""
     @State private var username = ""
@@ -181,6 +182,30 @@ struct ServerSettingsView: View {
                     Text("本地数据")
                 } footer: {
                     Text("缓存的是下载过的 CBZ、看过的散图和网格封面，清掉不影响服务器上的文件。")
+                }
+
+                Section {
+                    HStack {
+                        Text("已下载章节")
+                        Spacer()
+                        Text(downloads.records.isEmpty
+                             ? "无"
+                             : "\(downloads.records.count) 章 · \(downloads.formattedSize)")
+                            .foregroundColor(.secondary)
+                    }
+                    if downloads.isBusy {
+                        Button("取消正在进行的下载", role: .destructive) {
+                            downloads.cancelAll()
+                        }
+                    }
+                    Button("删除所有下载", role: .destructive) {
+                        downloads.removeAll()
+                    }
+                    .disabled(downloads.records.isEmpty)
+                } header: {
+                    Text("离线下载")
+                } footer: {
+                    Text("在章节列表右上角可以下载整本，左滑单个章节可以只下一章。下载的内容固定在手机上，没网也能看，不占 iCloud 备份空间。")
                 }
 
                 Section {
