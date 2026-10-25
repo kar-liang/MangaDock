@@ -51,7 +51,8 @@ struct LocalLibraryView: View {
         }
         .navigationTitle("本地文件")
         .navigationBarTitleDisplayMode(.inline)
-        .libraryNavigation()
+        // No .libraryNavigation(): FilesView already registered the NavTarget
+        // destinations; a duplicate registration broke pushes from here.
         .fileImporter(
             isPresented: $showImporter,
             allowedContentTypes: [.item],

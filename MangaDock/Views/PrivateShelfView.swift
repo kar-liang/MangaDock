@@ -35,7 +35,9 @@ struct PrivateShelfView: View {
                     }
                 }
                 .navigationTitle("隐私空间")
-                .libraryNavigation()
+                // No .libraryNavigation() here: the parent (ShelfView) already
+                // registered navigationDestination(for: NavTarget), and a second
+                // registration inside the stack made pushes bounce back.
             } else {
                 VStack(spacing: 14) {
                     Image(systemName: "lock.fill")
