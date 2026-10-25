@@ -24,6 +24,9 @@ struct ServerSettingsView: View {
     @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
     @AppStorage("mangadock.tab.files") private var showFilesTab = true
     @AppStorage("mangadock.tab.history") private var showHistoryTab = false
+    @AppStorage("mangadock.syncEnabled") private var syncEnabled = true
+    @State private var syncMessage: String?
+    @State private var syncing = false
 
     var body: some View {
         Form {
@@ -183,6 +186,42 @@ struct ServerSettingsView: View {
                     Text("本地数据")
                 } footer: {
                     Text("缓存的是下载过的 CBZ、看过的散图和网格封面，清掉不影响服务器上的文件。")
+                }
+
+                Section {
+                    Toggle("启用多设备同步", isOn: $syncEnabled)
+
+                    HStack {
+                        Text("上次同步")
+                        Spacer()
+                        Text(SyncService.lastSyncDate.map { $0.formatted(date: .omitted, time: .shortened) } ?? "从未")
+                            .foregroundColor(.secondary)
+                    }
+
+                    Button {
+                        syncing = true
+                        Task {
+                            syncMessage = await store.syncNow()
+                            syncing = false
+                        }
+                    } label: {
+                        HStack {
+                            Text("立即同步")
+                            Spacer()
+                            if syncing { ProgressView() }
+                        }
+                    }
+                    .disabled(syncing)
+
+                    if let syncMessage {
+                        Text(syncMessage)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("多设备同步")
+                } footer: {
+                    Text("进度、书架、设置会同步到 WebDAV 服务器上的隐藏文件（.mangadock-sync.json）。多台设备连同一个服务器即自动同步，最后写入的为准。密码不会同步，每台设备自己填。")
                 }
 
                 Section {

@@ -17,8 +17,8 @@ struct PrivateShelfView: View {
                             .multilineTextAlignment(.center)
                     }
                     ForEach(privacy.entries) { entry in
-                        if let item = entry.item {
-                            NavigationLink(value: NavTarget.comic(item)) {
+                        if let item = entry.item, let target = readerTarget(for: item) {
+                            NavigationLink(value: target) {
                                 HStack(spacing: 12) {
                                     Image(systemName: entry.isDirectory ? "folder" : "book.closed")
                                         .foregroundColor(.secondary)
@@ -52,7 +52,20 @@ struct PrivateShelfView: View {
                 }
             }
         }
-        .task { await authenticate() }
+        .task {
+            // `.task` re-runs every time this view re-appears (e.g. popping back
+            // from the reader), which used to re-trigger FaceID in a loop.
+            guard !unlocked else { return }
+            await authenticate()
+        }
+    }
+
+    /// Same rule as the shelf: a folder opens its chapter list, a single file
+    /// goes straight to the reader.
+    private func readerTarget(for item: WebDAVItem) -> NavTarget? {
+        if item.isDirectory { return .series(item) }
+        if item.isArchive || item.isPDF { return .comic(item) }
+        return nil
     }
 
     private func authenticate() async {

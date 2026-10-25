@@ -31,6 +31,20 @@ struct SyncPayload: Codable {
 enum SyncService {
     static let fileName = ".mangadock-sync.json"
 
+    static let enabledKey = "mangadock.syncEnabled"
+    static let lastSyncKey = "mangadock.sync.lastSync"
+
+    /// Defaults to ON until the user turns it off explicitly.
+    static var isEnabled: Bool {
+        let d = UserDefaults.standard
+        if d.object(forKey: enabledKey) == nil { return true }
+        return d.bool(forKey: enabledKey)
+    }
+
+    static var lastSyncDate: Date? {
+        UserDefaults.standard.object(forKey: lastSyncKey) as? Date
+    }
+
     static func syncURL(baseURL: URL) -> URL {
         baseURL.appendingPathComponent(fileName)
     }
@@ -67,18 +81,23 @@ enum SyncService {
     // MARK: - Push / pull
 
     static func push(store: AppStore, shelf: [ShelfEntry]) async {
-        guard let client = store.makeClient(),
+        guard isEnabled, let client = store.makeClient(),
               let base = store.baseURL else { return }
         let payload = payload(store: store, shelf: shelf)
         guard let data = try? JSONEncoder().encode(payload) else { return }
-        try? await client.upload(data, to: syncURL(baseURL: base))
+        do {
+            try await client.upload(data, to: syncURL(baseURL: base))
+            UserDefaults.standard.set(Date(), forKey: lastSyncKey)
+        } catch {
+            // Non-fatal: next change retries.
+        }
     }
 
     /// Fetches the remote payload and applies it if it's newer than local.
     /// Returns true when remote state was applied.
     @discardableResult
     static func pull(store: AppStore, shelfStore: ShelfStore) async -> Bool {
-        guard let client = store.makeClient(),
+        guard isEnabled, let client = store.makeClient(),
               let base = store.baseURL else { return false }
 
         guard let data = try? await client.data(for: syncURL(baseURL: base)),
@@ -95,6 +114,7 @@ enum SyncService {
 
         apply(remote, store: store, shelfStore: shelfStore)
         UserDefaults.standard.set(remote.updatedAt, forKey: "mangadock.sync.updatedAt")
+        UserDefaults.standard.set(Date(), forKey: lastSyncKey)
         return true
     }
 

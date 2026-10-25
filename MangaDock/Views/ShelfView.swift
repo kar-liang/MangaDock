@@ -29,6 +29,11 @@ struct ShelfView: View {
             }
             .navigationTitle("书架")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink(destination: PrivateShelfView()) {
+                        Image(systemName: "lock")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showAddWebComic = true
