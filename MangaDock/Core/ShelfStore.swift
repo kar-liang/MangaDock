@@ -91,9 +91,15 @@ final class ShelfStore: ObservableObject {
     }
 
     /// Replaces the whole shelf (used by multi-device sync).
+    ///
+    /// Deliberately does NOT post `shelfDidChange`: that notification triggers a
+    /// debounced push, so applying a remote payload would immediately bounce the
+    /// same data back to the server (and bump its timestamp for no reason).
     func replaceEntries(_ list: [ShelfEntry]) {
         entries = list
-        save()
+        if let data = try? JSONEncoder().encode(entries) {
+            defaults.set(data, forKey: storageKey)
+        }
     }
 
     private func save() {

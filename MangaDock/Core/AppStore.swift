@@ -57,14 +57,17 @@ final class AppStore: ObservableObject {
         _ = await SyncService.pull(store: self, shelfStore: ShelfStore.shared)
     }
 
-    /// Manual "sync now": pull the remote, then push the local state.
-    /// Returns a short result message for the settings UI.
-    func syncNow() async -> String {
+    /// Manual "上传同步": local state replaces the server copy.
+    func uploadSync() async -> String {
         guard isConfigured else { return "还没有配置服务器" }
-        guard SyncService.isEnabled else { return "同步已关闭" }
-        let pulled = await SyncService.pull(store: self, shelfStore: ShelfStore.shared)
-        await SyncService.push(store: self, shelf: ShelfStore.shared.entries)
-        return pulled ? "同步完成，已拉取远端数据" : "同步完成，已推送本地数据"
+        return await SyncService.pushNow(store: self, shelf: ShelfStore.shared.entries)
+    }
+
+    /// Manual "下载同步": the server copy replaces local state (explicit user
+    /// choice, so no last-write-wins veto).
+    func downloadSync() async -> String {
+        guard isConfigured else { return "还没有配置服务器" }
+        return await SyncService.pullNow(store: self, shelfStore: ShelfStore.shared)
     }
 
     // MARK: - Derived

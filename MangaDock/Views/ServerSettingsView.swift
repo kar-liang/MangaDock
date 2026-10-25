@@ -26,7 +26,15 @@ struct ServerSettingsView: View {
     @AppStorage("mangadock.tab.history") private var showHistoryTab = false
     @AppStorage("mangadock.syncEnabled") private var syncEnabled = true
     @State private var syncMessage: String?
-    @State private var syncing = false
+    @State private var syncBusy: SyncAction?
+    @State private var confirmDownload = false
+
+    /// Which direction is currently running, so both buttons can show a
+    /// spinner and stay disabled while the request is in flight.
+    private enum SyncAction: Equatable {
+        case upload
+        case download
+    }
 
     var body: some View {
         Form {
@@ -219,19 +227,36 @@ struct ServerSettingsView: View {
                     }
 
                     Button {
-                        syncing = true
-                        Task {
-                            syncMessage = await store.syncNow()
-                            syncing = false
-                        }
+                        Task { await runSync(.upload) }
                     } label: {
                         HStack {
-                            Text("立即同步")
+                            Label("上传同步", systemImage: "arrow.up.to.line")
                             Spacer()
-                            if syncing { ProgressView() }
+                            if syncBusy == .upload { ProgressView() }
                         }
                     }
-                    .disabled(syncing)
+                    .disabled(syncBusy != nil)
+
+                    Button {
+                        confirmDownload = true
+                    } label: {
+                        HStack {
+                            Label("下载同步", systemImage: "arrow.down.to.line")
+                            Spacer()
+                            if syncBusy == .download { ProgressView() }
+                        }
+                    }
+                    .disabled(syncBusy != nil)
+                    .confirmationDialog("用云端数据覆盖这台设备？",
+                                        isPresented: $confirmDownload,
+                                        titleVisibility: .visible) {
+                        Button("下载并覆盖本机", role: .destructive) {
+                            Task { await runSync(.download) }
+                        }
+                        Button("取消", role: .cancel) {}
+                    } message: {
+                        Text("本机的书架、阅读进度和阅读设置会被服务器上的版本替换。")
+                    }
 
                     if let syncMessage {
                         Text(syncMessage)
@@ -241,7 +266,7 @@ struct ServerSettingsView: View {
                 } header: {
                     Text("多设备同步")
                 } footer: {
-                    Text("进度、书架、设置会同步到 WebDAV 服务器上的隐藏文件（.mangadock-sync.json）。多台设备连同一个服务器即自动同步，最后写入的为准。密码不会同步，每台设备自己填。")
+                    Text("进度、书架、设置会存到 WebDAV 服务器上的隐藏文件（.mangadock-sync.json）。开关打开时多台设备自动同步，最后写入的为准；「上传同步」用本机覆盖云端，「下载同步」用云端覆盖本机，两个方向都由你手动决定。密码不会同步，每台设备自己填。")
                 }
 
                 Section {
@@ -297,6 +322,18 @@ struct ServerSettingsView: View {
 
     private func refreshCacheSize() {
         cacheSize = CacheManager.formattedSize()
+    }
+
+    private func runSync(_ action: SyncAction) async {
+        syncBusy = action
+        syncMessage = nil
+        switch action {
+        case .upload:
+            syncMessage = await store.uploadSync()
+        case .download:
+            syncMessage = await store.downloadSync()
+        }
+        syncBusy = nil
     }
 
     private func runDiagnostics() async {

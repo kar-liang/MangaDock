@@ -31,6 +31,9 @@ enum SyncService {
 
     static let enabledKey = "mangadock.syncEnabled"
     static let lastSyncKey = "mangadock.sync.lastSync"
+    /// Timestamp of the payload this device last pushed or applied — the basis
+    /// for last-write-wins on automatic pulls.
+    static let updatedAtKey = "mangadock.sync.updatedAt"
 
     /// Defaults to ON until the user turns it off explicitly.
     static var isEnabled: Bool {
@@ -83,10 +86,63 @@ enum SyncService {
         guard let data = try? JSONEncoder().encode(payload) else { return }
         do {
             try await client.upload(data, to: syncURL(baseURL: base))
+            // Remember what we just wrote, otherwise the next automatic pull
+            // would treat our own payload as "older" and could overwrite it.
+            UserDefaults.standard.set(payload.updatedAt, forKey: updatedAtKey)
             UserDefaults.standard.set(Date(), forKey: lastSyncKey)
         } catch {
             // Non-fatal: next change retries.
         }
+    }
+
+    /// Manual upload: this device's state replaces the copy on the server, no
+    /// timestamp comparison. Returns a one-line result for the settings UI.
+    static func pushNow(store: AppStore, shelf: [ShelfEntry]) async -> String {
+        guard let client = store.makeClient(), let base = store.baseURL else {
+            return "还没有配置服务器"
+        }
+        let payload = payload(store: store, shelf: shelf)
+        guard let data = try? JSONEncoder().encode(payload) else {
+            return "本地数据打包失败"
+        }
+        do {
+            try await client.upload(data, to: syncURL(baseURL: base))
+            UserDefaults.standard.set(payload.updatedAt, forKey: updatedAtKey)
+            UserDefaults.standard.set(Date(), forKey: lastSyncKey)
+            return "已上传：书架 \(shelf.count) 本 · 进度 \(store.recent.count) 条"
+        } catch {
+            return "上传失败：\(NetErrorText.friendly(error))"
+        }
+    }
+
+    /// Manual download: the server copy replaces local state unconditionally —
+    /// the user asked for it explicitly, so "last write wins" must not veto it.
+    static func pullNow(store: AppStore, shelfStore: ShelfStore) async -> String {
+        guard let client = store.makeClient(), let base = store.baseURL else {
+            return "还没有配置服务器"
+        }
+
+        let data: Data
+        do {
+            data = try await client.data(for: syncURL(baseURL: base))
+        } catch WebDAVError.badStatus(404) {
+            return "服务器上还没有同步文件，先点「上传同步」"
+        } catch {
+            return "下载失败：\(NetErrorText.friendly(error))"
+        }
+
+        guard let remote = try? JSONDecoder().decode(SyncPayload.self, from: data) else {
+            return "服务器上的同步文件读不出来（可能已损坏）"
+        }
+        guard remote.serverURL == store.serverURL else {
+            return "这份数据来自另一个服务器（\(remote.serverURL)），已拒绝覆盖"
+        }
+
+        apply(remote, store: store, shelfStore: shelfStore)
+        UserDefaults.standard.set(remote.updatedAt, forKey: updatedAtKey)
+        UserDefaults.standard.set(Date(), forKey: lastSyncKey)
+        let stamp = remote.updatedAt.formatted(date: .abbreviated, time: .shortened)
+        return "已下载（云端 \(stamp)）：书架 \(remote.shelf.count) 本 · 进度 \(remote.recent.count) 条"
     }
 
     /// Fetches the remote payload and applies it if it's newer than local.
@@ -105,11 +161,11 @@ enum SyncService {
         guard remote.serverURL == store.serverURL else { return false }
 
         // Last-write-wins.
-        let localUpdated = UserDefaults.standard.object(forKey: "mangadock.sync.updatedAt") as? Date ?? .distantPast
+        let localUpdated = UserDefaults.standard.object(forKey: updatedAtKey) as? Date ?? .distantPast
         guard remote.updatedAt > localUpdated else { return false }
 
         apply(remote, store: store, shelfStore: shelfStore)
-        UserDefaults.standard.set(remote.updatedAt, forKey: "mangadock.sync.updatedAt")
+        UserDefaults.standard.set(remote.updatedAt, forKey: updatedAtKey)
         UserDefaults.standard.set(Date(), forKey: lastSyncKey)
         return true
     }
