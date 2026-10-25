@@ -276,17 +276,23 @@ final class ReaderModel: ObservableObject {
     /// Background pre-renders the next few pages so turning the page is instant.
     /// Only meaningful when AI enhancement is on (that's the slow path); the GPU
     /// pipeline is already fast enough that pre-warming would just waste power.
+    /// Pages currently being pre-rendered, so repeated triggers don't queue
+    /// duplicate work (onAppear fires often while scrolling).
+    private var prewarming: Set<Int> = []
+
     func prewarm(from index: Int, count: Int = 2) {
         guard enhance, ImageEnhancer.hasAIModel, pageCount > 0 else { return }
         let end = min(pageCount, index + count)
         guard index < end else { return }
 
-        Task { [weak self] in
-            guard let self else { return }
-            for position in index..<end {
-                let key = NSNumber(value: position * 2 + 1)  // enhanced slot
-                guard self.imageCache.object(forKey: key) == nil else { continue }
-                await self.preparePage(position)
+        for position in index..<end {
+            let key = NSNumber(value: position * 2 + 1)  // enhanced slot
+            guard imageCache.object(forKey: key) == nil,
+                  !prewarming.contains(position) else { continue }
+            prewarming.insert(position)
+            Task { [weak self] in
+                await self?.preparePage(position)
+                self?.prewarming.remove(position)
             }
         }
     }

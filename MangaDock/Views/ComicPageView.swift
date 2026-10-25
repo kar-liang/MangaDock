@@ -40,6 +40,11 @@ struct ComicPageView: View {
             loadedGeneration = model.enhanceGeneration
             await load()
         }
+        .onAppear {
+            // Works for both paging and webtoon scrolling: whenever a page becomes
+            // visible, start rendering the ones after it in the background.
+            model.prewarm(from: index + 1)
+        }
     }
 
     @ViewBuilder

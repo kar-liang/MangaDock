@@ -59,16 +59,16 @@ enum AIEnhancer {
         guard cgImage.width > 0, cgImage.height > 0 else { return nil }
         guard let model = model() else { return nil }
 
-        // 2x mode: downscale the source to half FIRST, then run the native 4x.
-        // The output then equals the original at 2x — with 4x fewer tiles, so
-        // roughly 4x faster than upscaling everything and halving afterwards.
-        // Input caps keep the output bitmap within memory-friendly bounds
-        // (2x ≤ 3200px, 4x ≤ 4096px long edge).
+        // 2x used to downscale the source to half first (fewer tiles, faster),
+        // but halving destroys small text before the model ever sees it — the
+        // result looked worse than the original. Now both scales run the native
+        // 4x on the full-resolution input; 2x downsamples the finished canvas
+        // afterwards, so detail survives. Input caps keep memory in check
+        // (2x ≤ 3200px, 4x ≤ 4096px output long edge).
         let src: CGImage
         switch scale {
         case .two:
-            let half = resize(cgImage, to: CGSize(width: cgImage.width / 2, height: cgImage.height / 2)) ?? cgImage
-            src = clampLongEdge(half, to: 1600)
+            src = clampLongEdge(cgImage, to: 1600)
         case .four:
             src = clampLongEdge(cgImage, to: 1024)
         }
@@ -143,8 +143,13 @@ enum AIEnhancer {
             }
         }
 
-        // For 2x mode the canvas is already at original-size × 2 — ship as-is.
+        // For 2x the canvas is 4x the (capped) input — downsample to 2x of the
+        // input size, keeping the detail the model reconstructed.
         guard let result = context.makeImage() else { return nil }
+        if scale == .two {
+            return resize(result, to: CGSize(width: width * 2, height: height * 2))
+                .map { UIImage(cgImage: $0) }
+        }
         return UIImage(cgImage: result)
     }
 

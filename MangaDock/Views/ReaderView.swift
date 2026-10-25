@@ -7,6 +7,8 @@ struct ReaderView: View {
 
     @State private var showBars = true
     @State private var verticalOverride: Bool? = nil
+    /// Guards the "pull past bottom → next chapter" jump against re-firing.
+    @State private var chapterJumpArmed = false
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -137,6 +139,27 @@ struct ReaderView: View {
             .padding(.vertical, 6)
         }
         .background(Color.black)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            // How far past the content bottom the user has dragged (rubber-band
+            // overshoot). Negative/zero while inside normal scroll range.
+            geometry.contentOffset.y + geometry.containerSize.height
+                - geometry.contentInsets.bottom - geometry.contentSize.height
+        } action: { _, overshoot in
+            handleBottomOvershoot(overshoot)
+        }
+    }
+
+    /// At the bottom, pulling further down (rubber band) by ~30pt jumps to the
+    /// next chapter — no need to aim for the "下一话" button.
+    private func handleBottomOvershoot(_ overshoot: CGFloat) {
+        guard model.nextItem != nil else { return }
+        if overshoot > 30 {
+            guard !chapterJumpArmed else { return }
+            chapterJumpArmed = true
+            goNextChapter()
+        } else if overshoot < 5 {
+            chapterJumpArmed = false  // back inside the list: re-arm
+        }
     }
 
     // MARK: - Tap handling
