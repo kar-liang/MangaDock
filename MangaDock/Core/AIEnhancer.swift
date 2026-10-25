@@ -59,24 +59,25 @@ enum AIEnhancer {
         guard cgImage.width > 0, cgImage.height > 0 else { return nil }
         guard let model = model() else { return nil }
 
-        // 2x used to downscale the source to half first (fewer tiles, faster),
-        // but halving destroys small text before the model ever sees it — the
-        // result looked worse than the original. Now both scales run the native
-        // 4x on the full-resolution input; 2x downsamples the finished canvas
-        // afterwards, so detail survives. Input caps keep memory in check
-        // (2x ≤ 3200px, 4x ≤ 4096px output long edge).
-        let src: CGImage
-        switch scale {
-        case .two:
-            src = clampLongEdge(cgImage, to: 1600)
-        case .four:
-            src = clampLongEdge(cgImage, to: 1024)
-        }
+        // The input is NEVER downscaled — shrinking first destroys small text
+        // and the model can't reconstruct what it never saw (the "blurry 4x"
+        // bug on high-res sources). Instead the OUTPUT scale adapts: a high-res
+        // source gets a smaller effective multiplier so the canvas stays within
+        // memory bounds, while a low-res source gets the full 4x. The phone
+        // screen can't show more than ~4000px anyway.
+        let srcLong = max(cgImage.width, cgImage.height)
+        let targetLong: CGFloat = {
+            let desired = CGFloat(srcLong) * CGFloat(scale.rawValue)
+            let cap: CGFloat = scale == .two ? 3_200 : 4_096
+            return min(desired, cap)
+        }()
+        let s = max(1.0, min(4.0, targetLong / CGFloat(srcLong)))
 
+        let src = cgImage
         let width = src.width
         let height = src.height
-        let outW = width * 4
-        let outH = height * 4
+        let outW = Int((CGFloat(width) * s).rounded())
+        let outH = Int((CGFloat(height) * s).rounded())
 
         guard let context = CGContext(
             data: nil, width: outW, height: outH,
@@ -137,19 +138,18 @@ enum AIEnhancer {
                                                          width: keepW * 4, height: keepH * 4)) else { continue }
 
                 // CGContext origin is bottom-left; the tile math above is top-left.
-                let dstX = keepX * 4
-                let dstY = outH - (keepY + keepH) * 4
-                context.draw(piece, in: CGRect(x: dstX, y: dstY, width: keepW * 4, height: keepH * 4))
+                // Draw at the EFFECTIVE scale — the piece (4x) scales down in the
+                // draw call when s < 4, keeping full model detail.
+                let dstX = CGFloat(keepX) * s
+                let dstY = CGFloat(outH) - CGFloat(keepY + keepH) * s
+                context.draw(piece, in: CGRect(x: dstX, y: dstY,
+                                               width: CGFloat(keepW) * s,
+                                               height: CGFloat(keepH) * s))
             }
         }
 
-        // For 2x the canvas is 4x the (capped) input — downsample to 2x of the
-        // input size, keeping the detail the model reconstructed.
+        // Canvas is already at the effective scale — ship as-is.
         guard let result = context.makeImage() else { return nil }
-        if scale == .two {
-            return resize(result, to: CGSize(width: width * 2, height: height * 2))
-                .map { UIImage(cgImage: $0) }
-        }
         return UIImage(cgImage: result)
     }
 
@@ -223,27 +223,5 @@ enum AIEnhancer {
         ctx.interpolationQuality = .high
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return buffer
-    }
-
-    /// Downscales a CGImage to the given size (for 2x output from a 4x tile).
-    private static func resize(_ image: CGImage, to size: CGSize) -> CGImage? {
-        guard let context = CGContext(
-            data: nil, width: Int(size.width), height: Int(size.height),
-            bitsPerComponent: 8, bytesPerRow: Int(size.width) * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-        context.interpolationQuality = .high
-        context.draw(image, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
-        return context.makeImage()
-    }
-
-    /// Caps the long edge so a page never produces an oversized output bitmap.
-    private static func clampLongEdge(_ image: CGImage, to limit: Int) -> CGImage {
-        let longEdge = max(image.width, image.height)
-        guard longEdge > limit else { return image }
-        let factor = CGFloat(limit) / CGFloat(longEdge)
-        return resize(image, to: CGSize(width: CGFloat(image.width) * factor,
-                                        height: CGFloat(image.height) * factor)) ?? image
     }
 }

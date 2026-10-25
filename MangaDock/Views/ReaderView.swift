@@ -276,9 +276,6 @@ struct ReaderView: View {
     }
 
     private var pageLabel: String {
-        if verticalMode {
-            return "共 \(model.pageCount) 页"
-        }
         if model.isOnChapterEndCard {
             return "本话看完"
         }
