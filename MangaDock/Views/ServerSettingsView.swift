@@ -225,7 +225,7 @@ struct ServerSettingsView: View {
                 }
 
                 Section {
-                    NavigationLink(destination: PrivateShelfView()) {
+                    NavigationLink(value: NavTarget.privateShelf) {
                         HStack {
                             Label("隐私空间", systemImage: "lock")
                             Spacer()
@@ -250,6 +250,7 @@ struct ServerSettingsView: View {
         }
         .navigationTitle(initialSetup ? "连接 WebDAV" : "设置")
         .navigationBarTitleDisplayMode(initialSetup ? .large : .inline)
+        .libraryNavigation()
         .onAppear(perform: loadExisting)
         .confirmationDialog("清除 WebDAV 配置？", isPresented: $confirmClearServer, titleVisibility: .visible) {
             Button("清除", role: .destructive) {

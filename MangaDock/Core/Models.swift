@@ -67,6 +67,10 @@ enum NavTarget: Hashable {
     case series(WebDAVItem)
     /// Straight into the reader.
     case comic(WebDAVItem)
+    /// FaceID-gated hidden shelf.
+    case privateShelf
+    /// Local files imported from the Files app.
+    case localLibrary
 }
 
 struct RecentEntry: Identifiable, Codable, Hashable {

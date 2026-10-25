@@ -33,7 +33,7 @@ struct FilesView: View {
     private var listContent: some View {
         List {
             Section {
-                NavigationLink(destination: LocalLibraryView()) {
+                NavigationLink(value: NavTarget.localLibrary) {
                     Label("本地文件", systemImage: "internaldrive")
                 }
             }
@@ -72,7 +72,7 @@ struct FilesView: View {
     private var gridContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                NavigationLink(destination: LocalLibraryView()) {
+                NavigationLink(value: NavTarget.localLibrary) {
                     Label("本地文件", systemImage: "internaldrive")
                         .font(.subheadline.weight(.semibold))
                 }

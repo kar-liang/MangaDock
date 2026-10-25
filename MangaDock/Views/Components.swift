@@ -90,6 +90,10 @@ struct LibraryNavigationModifier: ViewModifier {
                 SeriesView(folder: item)
             case .comic(let item):
                 ReaderView(item: item)
+            case .privateShelf:
+                PrivateShelfView()
+            case .localLibrary:
+                LocalLibraryView()
             }
         }
     }

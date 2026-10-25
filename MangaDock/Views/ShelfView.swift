@@ -30,7 +30,7 @@ struct ShelfView: View {
             .navigationTitle("书架")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink(destination: PrivateShelfView()) {
+                    NavigationLink(value: NavTarget.privateShelf) {
                         Image(systemName: "lock")
                     }
                 }
