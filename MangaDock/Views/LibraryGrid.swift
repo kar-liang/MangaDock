@@ -7,12 +7,32 @@ enum CoverShelfAction: Equatable {
     case toggle
 }
 
+/// One extra long-press action injected by the hosting screen (e.g. the
+/// private shelf's restore/delete). Kept value-erased so `CoverBox` can pass
+/// it around without generic `@ViewBuilder` plumbing.
+struct CoverMenuItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let systemImage: String
+    var destructive = false
+    let action: () -> Void
+}
+
 /// Image-only cover box (2:3). Used by the grid and by list rows.
 /// Long-press to swap in your own cover from the photo library.
+///
+/// The long-press menu is built from an explicit `extraMenu` list (prepended
+/// before the cover actions). We build ONE menu here instead of nesting
+/// `.contextMenu` modifiers: SwiftUI keeps only the outermost contextMenu and
+/// silently drops inner ones, which is why the private-shelf restore/delete
+/// buttons vanished when we attached them around `CoverTile`.
 struct CoverBox: View {
     let item: WebDAVItem
     var width: CGFloat? = nil
     var shelfAction: CoverShelfAction = .none
+    /// Actions shown at the top of the long-press menu (e.g. restore / delete
+    /// in the private shelf).
+    var extraMenu: [CoverMenuItem] = []
 
     @EnvironmentObject private var store: AppStore
     @State private var image: UIImage?
@@ -54,6 +74,15 @@ struct CoverBox: View {
 
     @ViewBuilder
     private var coverMenu: some View {
+        ForEach(extraMenu.indices, id: \.self) { index in
+            let entry = extraMenu[index]
+            Button(role: entry.destructive ? .destructive : nil) {
+                entry.action()
+            } label: {
+                Label(entry.title, systemImage: entry.systemImage)
+            }
+        }
+
         if shelfAction == .toggle {
             ShelfMenu(item: item)
         }
@@ -135,10 +164,11 @@ struct CoverBox: View {
 struct CoverTile: View {
     let item: WebDAVItem
     var shelfAction: CoverShelfAction = .none
+    var extraMenu: [CoverMenuItem] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            CoverBox(item: item, shelfAction: shelfAction)
+            CoverBox(item: item, shelfAction: shelfAction, extraMenu: extraMenu)
             Text(item.displayName)
                 .font(.caption)
                 .lineLimit(2)

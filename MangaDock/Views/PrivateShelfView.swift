@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// FaceID/passcode-gated list of hidden comics.
+/// FaceID/passcode-gated grid of hidden comics.
 struct PrivateShelfView: View {
     @ObservedObject private var privacy = PrivacyStore.shared
 
@@ -25,15 +25,8 @@ struct PrivateShelfView: View {
                     } else {
                         LazyVGrid(columns: LibraryGrid.columns, spacing: 16) {
                             ForEach(privacy.entries) { entry in
-                                if let item = entry.item, let target = readerTarget(for: item) {
-                                    NavigationLink(value: target) {
-                                        CoverTile(item: item)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button("恢复到书架") { privacy.restore(entry) }
-                                        Button("删除", role: .destructive) { privacy.remove(entry) }
-                                    }
+                                if let item = entry.item {
+                                    tile(entry: entry, item: item)
                                 }
                             }
                         }
@@ -65,6 +58,72 @@ struct PrivateShelfView: View {
             guard !privacy.unlocked else { return }
             await authenticate()
         }
+    }
+
+    /// One cover cell.
+    ///
+    /// The restore/delete actions are reachable two ways on purpose:
+    ///  * a visible "···" button in the corner — discoverable, works even when
+    ///    the long press gesture is competing with the NavigationLink;
+    ///  * the long-press menu below the cover, via `CoverBox.extraMenu`. That
+    ///    must go THROUGH CoverBox (one merged menu) — attaching an outer
+    ///    `.contextMenu` around the tile is silently dropped because SwiftUI
+    ///    keeps only one context menu per view hierarchy branch.
+    private func tile(entry: ShelfEntry, item: WebDAVItem) -> some View {
+        let extra = [
+            CoverMenuItem(title: "恢复到书架",
+                          systemImage: "arrow.uturn.backward") {
+                privacy.restore(entry)
+            },
+            CoverMenuItem(title: "删除",
+                          systemImage: "trash",
+                          destructive: true) {
+                privacy.remove(entry)
+            }
+        ]
+
+        return Group {
+            if let target = readerTarget(for: item) {
+                NavigationLink(value: target) {
+                    CoverTile(item: item, extraMenu: extra)
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Unsupported type (e.g. a stray file): still show it so it can
+                // be restored or deleted instead of being a silent dead end.
+                CoverTile(item: item, extraMenu: extra)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            actionButton(entry: entry)
+        }
+    }
+
+    private func actionButton(entry: ShelfEntry) -> some View {
+        Menu {
+            Button {
+                privacy.restore(entry)
+            } label: {
+                Label("恢复到书架", systemImage: "arrow.uturn.backward")
+            }
+
+            Button(role: .destructive) {
+                privacy.remove(entry)
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 26, height: 26)
+                .background(.black.opacity(0.45), in: Circle())
+                .overlay(
+                    Circle().strokeBorder(.white.opacity(0.3), lineWidth: 0.5)
+                )
+        }
+        .padding(6)
+        .accessibilityLabel("更多操作")
     }
 
     /// Same rule as the shelf: a folder opens its chapter list, a single file
