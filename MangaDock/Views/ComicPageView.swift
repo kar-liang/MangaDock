@@ -44,6 +44,7 @@ struct ComicPageView: View {
             // Works for both paging and webtoon scrolling: whenever a page becomes
             // visible, start rendering the ones after it in the background.
             model.prewarm(from: index + 1)
+            model.preloadNextChapterIfNeeded()
         }
     }
 

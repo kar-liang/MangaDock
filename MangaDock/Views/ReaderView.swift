@@ -53,6 +53,7 @@ struct ReaderView: View {
             guard model.pageCount > 0 else { return }
             saveProgress(page: min(newValue, model.pageCount - 1))
             model.prewarm(from: newValue + 1)
+            model.preloadNextChapterIfNeeded()
         }
         .onDisappear {
             guard model.pageCount > 0 else { return }

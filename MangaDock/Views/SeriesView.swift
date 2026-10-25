@@ -8,9 +8,19 @@ struct SeriesView: View {
 
     @EnvironmentObject private var store: AppStore
     @StateObject private var loader = FolderLoader()
+    @AppStorage("mangadock.chapterOrder") private var orderRaw = ChapterOrder.ascending.rawValue
+
+    private enum ChapterOrder: String {
+        case ascending, descending
+    }
+
+    private var order: ChapterOrder {
+        ChapterOrder(rawValue: orderRaw) ?? .ascending
+    }
 
     private var chapters: [WebDAVItem] {
-        loader.items.filter { $0.isDirectory || $0.isArchive || $0.isPDF }
+        let items = loader.items.filter { $0.isDirectory || $0.isArchive || $0.isPDF }
+        return order == .ascending ? items : items.reversed()
     }
 
     private var imageCount: Int {
@@ -88,6 +98,16 @@ struct SeriesView: View {
         }
         .navigationTitle(folder.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    orderRaw = (order == .ascending ? ChapterOrder.descending : ChapterOrder.ascending).rawValue
+                } label: {
+                    Image(systemName: order == .ascending ? "arrow.down" : "arrow.up")
+                }
+                .accessibilityLabel(order == .ascending ? "切换到倒序" : "切换到正序")
+            }
+        }
         .task { await reload() }
         .refreshable { await reload() }
     }

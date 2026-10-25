@@ -130,19 +130,22 @@ final class ReaderModel: ObservableObject {
         seriesIndex = candidates.firstIndex(where: { $0.id == currentItem.id }) ?? 0
     }
 
-    private func prepare(item: WebDAVItem, client: WebDAVClient) async throws -> ComicPageSource {
+    private func prepare(item: WebDAVItem, client: WebDAVClient, silent: Bool = false) async throws -> ComicPageSource {
         if item.isArchive || item.isPDF {
             let cacheURL = CacheManager.archiveURL(for: item.url)
             if !CacheManager.hasArchive(for: item.url) {
-                statusText = "正在下载 \(item.displayName)…"
+                if !silent { statusText = "正在下载 \(item.displayName)…" }
                 try await client.download(item.url, to: cacheURL) { [weak self] value in
+                    guard !silent else { return }
                     Task { @MainActor [weak self] in
                         self?.downloadProgress = value
                     }
                 }
             }
-            statusText = item.isPDF ? "正在解析 PDF…" : "正在解压目录…"
-            downloadProgress = nil
+            if !silent {
+                statusText = item.isPDF ? "正在解析 PDF…" : "正在解压目录…"
+                downloadProgress = nil
+            }
             let url = cacheURL
             let isPDF = item.isPDF
             do {
@@ -156,7 +159,7 @@ final class ReaderModel: ObservableObject {
             }
         }
 
-        statusText = "正在读取目录…"
+        if !silent { statusText = "正在读取目录…" }
         let children = try await client.list(item.requestURL)
         let images = children
             .filter { !$0.isDirectory && $0.isImage }
@@ -179,11 +182,42 @@ final class ReaderModel: ObservableObject {
 
     // MARK: - Chapter switching
 
+    /// Pre-loaded next chapter, keyed by its series index.
+    private var preparedNext: (index: Int, source: ComicPageSource)?
+    private var preloadingNext = false
+
+    /// Background-prepares the next chapter once the reader is near the end,
+    /// so tapping/overscrolling into it is instant.
+    func preloadNextChapterIfNeeded() {
+        guard let client, pageCount > 0, index >= pageCount - 2 else { return }
+        let target = seriesIndex + 1
+        guard target >= 0, target < series.count else { return }
+        guard preparedNext?.index != target, !preloadingNext else { return }
+
+        preloadingNext = true
+        let item = series[target]
+        Task { [weak self] in
+            guard let self else { return }
+            if let source = try? await self.prepare(item: item, client: client, silent: true) {
+                self.preparedNext = (target, source)
+            }
+            self.preloadingNext = false
+        }
+    }
+
     @discardableResult
     func advanceChapter(direction: Int) async -> Bool {
         guard let client else { return false }
         let target = seriesIndex + direction
         guard target >= 0, target < series.count else { return false }
+
+        // Reuse the pre-loaded next chapter when moving forward.
+        if direction == 1, let p = preparedNext, p.index == target {
+            adopt(item: series[target], source: p.source, startPage: 0)
+            preparedNext = nil
+            seriesIndex = target
+            return true
+        }
 
         chapterError = nil
         isLoading = true
