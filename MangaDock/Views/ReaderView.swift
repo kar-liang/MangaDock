@@ -9,6 +9,9 @@ struct ReaderView: View {
     @State private var verticalOverride: Bool? = nil
     /// Guards the "pull past bottom → next chapter" jump against re-firing.
     @State private var chapterJumpArmed = false
+    /// Tracks the top visible page in webtoon mode — the real reading progress
+    /// there, since `model.index` only moves in paged mode.
+    @State private var verticalPageID: Int?
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -129,6 +132,7 @@ struct ReaderView: View {
                 ForEach(0..<model.pageCount, id: \.self) { position in
                     ComicPageView(model: model, index: position,
                                   onTap: toggleBars, stableHeight: true)
+                        .id(position)
                         .frame(maxWidth: .infinity)
                 }
                 if model.nextItem != nil {
@@ -137,8 +141,21 @@ struct ReaderView: View {
                 }
             }
             .padding(.vertical, 6)
+            .scrollTargetLayout()
         }
         .background(Color.black)
+        .scrollPosition(id: $verticalPageID, anchor: .top)
+        .onAppear {
+            // Jump to the saved page; id-based positioning needs the ID set once.
+            if verticalPageID == nil {
+                verticalPageID = model.index
+            }
+        }
+        .onChange(of: verticalPageID) { _, newID in
+            guard let page = newID, page != model.index else { return }
+            model.index = page
+            saveProgress(page: page)
+        }
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             // How far past the content bottom the user has dragged (rubber-band
             // overshoot). Negative/zero while inside normal scroll range.
