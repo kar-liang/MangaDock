@@ -106,6 +106,31 @@ final class ReaderModel: ObservableObject {
         }
     }
 
+    /// Local-file path: no WebDAV client, read straight off disk.
+    func startLocal(startPage: Int) async {
+        isLoading = true
+        errorMessage = nil
+        chapterError = nil
+        series = [currentItem]
+        seriesIndex = 0
+
+        do {
+            let prepared = try await prepareLocal(item: currentItem)
+            adopt(item: currentItem, source: prepared, startPage: startPage)
+            isLoading = false
+        } catch {
+            errorMessage = Self.message(for: error)
+            isLoading = false
+        }
+    }
+
+    private func prepareLocal(item: WebDAVItem) async throws -> ComicPageSource {
+        return try await Task.detached(priority: .userInitiated) { () -> ComicPageSource in
+            if item.isPDF { return try PDFComicSource(fileURL: item.url) }
+            return try ZipComicSource(fileURL: item.url)
+        }.value
+    }
+
     /// Sibling chapters come from the parent folder. Same kind only — a folder of
     /// image chapters walks to other folders, a CBZ walks to other CBZ files.
     private func buildSeries(client: WebDAVClient) async {

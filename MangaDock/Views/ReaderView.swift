@@ -396,6 +396,10 @@ struct ReaderView: View {
     // MARK: - Loading
 
     private func reload() async {
+        if model.currentItem.url.isFileURL {
+            await model.startLocal(startPage: store.recentPage(for: model.currentItem.url))
+            return
+        }
         guard let client = store.makeClient() else {
             model.errorMessage = "还没有配置服务器"
             model.isLoading = false

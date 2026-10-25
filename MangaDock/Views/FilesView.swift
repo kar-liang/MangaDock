@@ -33,6 +33,12 @@ struct FilesView: View {
     private var listContent: some View {
         List {
             Section {
+                NavigationLink(destination: LocalLibraryView()) {
+                    Label("本地文件", systemImage: "internaldrive")
+                }
+            }
+
+            Section {
                 if loader.isLoading {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -66,6 +72,12 @@ struct FilesView: View {
     private var gridContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                NavigationLink(destination: LocalLibraryView()) {
+                    Label("本地文件", systemImage: "internaldrive")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+
                 if loader.isLoading {
                     HStack(spacing: 10) {
                         ProgressView()
