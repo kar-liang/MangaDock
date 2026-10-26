@@ -31,7 +31,7 @@ struct BangumiCard: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(subject.displayTitle)
-                        .font(.title3.weight(.bold))
+                        .font(.title2.weight(.bold))
                         .lineLimit(2)
 
                     if subject.displayTitle != subject.name {
@@ -48,7 +48,7 @@ struct BangumiCard: View {
                                     .font(.system(size: 11))
                                     .foregroundColor(.orange)
                                 Text(scoreText)
-                                    .font(.subheadline.weight(.bold))
+                                    .font(.title3.weight(.bold))
                                     .foregroundColor(.orange)
                             }
                         }
@@ -77,7 +77,7 @@ struct BangumiCard: View {
 
             if let summary = subject.summary, !summary.isEmpty {
                 Text(summary)
-                    .font(.footnote)
+                    .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineSpacing(2)
                     .lineLimit(expanded ? nil : 3)
@@ -90,8 +90,8 @@ struct BangumiCard: View {
                 HStack(spacing: 5) {
                     ForEach(topTags, id: \.self) { tag in
                         Text(tag)
-                            .font(.system(size: 11, weight: .medium))
-                            .padding(.horizontal, 7)
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Color.accentColor.opacity(0.12), in: Capsule())
                             .foregroundColor(.accentColor)
@@ -120,8 +120,8 @@ struct BangumiCard: View {
                 placeholder
             }
         }
-        .frame(width: 80, height: 108)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .frame(width: 96, height: 128)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var placeholder: some View {

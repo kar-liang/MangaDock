@@ -39,7 +39,10 @@ struct BangumiCharactersRow: View {
                 if let url = character.portraitURL {
                     AsyncImage(url: url) { phase in
                         if case .success(let image) = phase {
-                            image.resizable().scaledToFill()
+                            image.resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 88, height: 118, alignment: .top)
+                                .clipped()
                         } else {
                             placeholder
                         }
