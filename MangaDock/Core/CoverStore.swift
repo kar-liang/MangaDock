@@ -185,21 +185,6 @@ final class CoverStore {
         NotificationCenter.default.post(name: .coversDidChange, object: nil)
     }
 
-    /// 一键清掉所有自定义封面，全部回到自动封面（Bangumi / 第一页）。
-    /// 返回清掉的张数。
-    @discardableResult
-    func removeAllCustomCovers() -> Int {
-        let list = CacheManager.loadCustomCoverManifest()
-        guard !list.isEmpty else { return 0 }
-        for entry in list {
-            CacheManager.deleteCover(key: entry.itemID)
-            dropManifest(itemID: entry.itemID)
-            images[entry.itemID] = nil
-        }
-        NotificationCenter.default.post(name: .coversDidChange, object: nil)
-        return list.count
-    }
-
     /// Stores a cover that arrived from another device. Returns false when the
     /// bytes aren't a usable image.
     @discardableResult

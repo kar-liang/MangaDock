@@ -217,8 +217,6 @@ struct StorageSettingsView: View {
 
     @State private var cacheSize = ""
     @State private var confirmClearCache = false
-    @State private var confirmClearCovers = false
-    @State private var customCoverCount = 0
 
     var body: some View {
         Form {
@@ -235,23 +233,6 @@ struct StorageSettingsView: View {
                 Text("缓存")
             } footer: {
                 Text("缓存的是下载过的 CBZ、看过的散图和自动生成的封面，清掉不影响服务器上的文件。你自己设置的自定义封面不算缓存，不会被清掉。")
-            }
-
-            Section {
-                HStack {
-                    Text("自定义封面")
-                    Spacer()
-                    Text(customCoverCount == 0 ? "无" : "\(customCoverCount) 张")
-                        .foregroundColor(.secondary)
-                }
-                Button("清除所有自定义封面", role: .destructive) {
-                    confirmClearCovers = true
-                }
-                .disabled(customCoverCount == 0)
-            } header: {
-                Text("封面")
-            } footer: {
-                Text("自定义封面优先于 Bangumi 封面。清掉后，书架会自动回到 Bangumi 的封面（没有匹配到条目的则回到第一页生成的封面）。")
             }
 
             Section {
@@ -294,10 +275,7 @@ struct StorageSettingsView: View {
         }
         .navigationTitle("存储与下载")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            refreshCacheSize()
-            customCoverCount = CoverStore.shared.customCovers.count
-        }
+        .onAppear { refreshCacheSize() }
         .confirmationDialog("清除漫画缓存？", isPresented: $confirmClearCache, titleVisibility: .visible) {
             Button("清除", role: .destructive) {
                 CacheManager.clear()
@@ -307,15 +285,6 @@ struct StorageSettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("会清掉缓存和解压出来的图片，下次打开需要重新下载。你设置的自定义封面会保留。")
-        }
-        .confirmationDialog("清除所有自定义封面？", isPresented: $confirmClearCovers, titleVisibility: .visible) {
-            Button("清除 \(customCoverCount) 张", role: .destructive) {
-                CoverStore.shared.removeAllCustomCovers()
-                customCoverCount = 0
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("清除后不可撤销，书架会回到 Bangumi 封面或自动生成的封面。")
         }
     }
 
