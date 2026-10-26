@@ -30,14 +30,39 @@
       ],
       "name": "character",
       "specular": true,
-      "translucency": {
-        "enabled": true,
-        "value": 0.25
-      },
       "shadow": {
         "kind": "layer-color",
         "opacity": 0.45
-      }
+      },
+      "blend-mode-specializations": [
+        {
+          "value": "normal"
+        },
+        {
+          "appearance": "dark",
+          "value": "plus-lighter"
+        },
+        {
+          "appearance": "tinted",
+          "value": "plus-lighter"
+        }
+      ],
+      "translucency-specializations": [
+        {
+          "value": {
+            "enabled": true,
+            "value": 0.25
+          }
+        },
+        {
+          "appearance": "dark",
+          "value": {
+            "enabled": true,
+            "value": 0.45
+          }
+        }
+      ],
+      "lighting": "individual"
     }
   ],
   "supported-platforms": {

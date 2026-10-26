@@ -161,4 +161,5 @@ ZIP 解析是自己写的（`Core/ZipArchive.swift`），只依赖系统 `Compre
 | 1.9.3 | 图标改用 Icon Composer 分层格式（.icon），由系统渲染液态玻璃高光与折射 |
 | 1.9.4 | 补 CFBundleIconName（否则 iOS 26 不认分层图标）；玻璃半透明度收到 0.25 |
 | 1.9.5 | 深色图标改近黑蓝灰底 + 轮廓光（纯黑会把蓝圆吃掉）；显式声明 light 分支 |
+| 1.9.6 | 深色图标加 plus-lighter 混合 + 更高通透度，玻璃高光才不被暗底压没 |
 
