@@ -5,6 +5,8 @@ struct ServerSettingsView: View {
 
     @EnvironmentObject private var store: AppStore
     @ObservedObject private var downloads = DownloadStore.shared
+    @ObservedObject private var diagLog = DiagLog.shared
+    @State private var showDiagnostics = false
 
     @State private var serverURL = ""
     @State private var username = ""
@@ -217,6 +219,23 @@ struct ServerSettingsView: View {
                 }
 
                 Section {
+                    Button {
+                        showDiagnostics = true
+                    } label: {
+                        HStack {
+                            Text("诊断日志")
+                            Spacer()
+                            Text(diagLog.entries.isEmpty ? "暂无" : "\(diagLog.entries.count) 条")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("排错")
+                } footer: {
+                    Text("遇到打开错章节、白屏、加载失败这类问题，先打开这里点「复制」，把整段日志发出来。日志只存在本机，不上传。")
+                }
+
+                Section {
                     Toggle("启用多设备同步", isOn: $syncEnabled)
 
                     HStack {
@@ -297,6 +316,9 @@ struct ServerSettingsView: View {
         .navigationBarTitleDisplayMode(initialSetup ? .large : .inline)
         .libraryNavigation()
         .onAppear(perform: loadExisting)
+        .sheet(isPresented: $showDiagnostics) {
+            DiagnosticsView()
+        }
         .confirmationDialog("清除 WebDAV 配置？", isPresented: $confirmClearServer, titleVisibility: .visible) {
             Button("清除", role: .destructive) {
                 store.clearConfiguration()

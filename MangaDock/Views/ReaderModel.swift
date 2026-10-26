@@ -73,7 +73,21 @@ final class ReaderModel: ObservableObject {
 
     var chapterLabel: String {
         guard series.count > 1 else { return "" }
+        // Show the real chapter number, not the array position. The chapter list
+        // can be reversed while `series` is always ascending, so a position was
+        // easy to misread as "it opened the wrong chapter".
+        if let number = Self.chapterNumber(in: currentItem.displayName) {
+            return "第 \(number) 话 · \(seriesIndex + 1)/\(series.count)"
+        }
         return "第 \(seriesIndex + 1) / \(series.count) 话"
+    }
+
+    /// Pulls "770" out of a name like "一人之下 - 第770话 770 点将".
+    static func chapterNumber(in name: String) -> String? {
+        guard let range = name.range(of: "第\\s*[0-9]+\\s*话",
+                                     options: .regularExpression) else { return nil }
+        let digits = name[range].filter { $0.isNumber }
+        return digits.isEmpty ? nil : String(digits)
     }
 
     func toggleEnhance() {
@@ -100,6 +114,7 @@ final class ReaderModel: ObservableObject {
 
     func start(client: WebDAVClient, startPage: Int) async {
         self.client = client
+        diag("reader", "open name=\(currentItem.name) startPage=\(startPage) url=\(currentItem.url.absoluteString)")
         isLoading = true
         errorMessage = nil
         chapterError = nil
@@ -171,13 +186,34 @@ final class ReaderModel: ObservableObject {
         candidates.sort { NaturalSort.less($0.name, $1.name) }
 
         series = candidates
-        seriesIndex = candidates.firstIndex(where: { $0.id == currentItem.id }) ?? 0
+        if let index = candidates.firstIndex(where: { $0.id == currentItem.id }) {
+            seriesIndex = index
+        } else {
+            // Shouldn't happen (currentItem is appended when missing), but if it
+            // does the reader would silently point at chapter 1.
+            diag("series", "current NOT FOUND among \(candidates.count) candidates: \(currentItem.name)")
+            seriesIndex = 0
+        }
+        logSeries()
+    }
+
+    /// Records the series the reader computed. The chapter label is derived
+    /// from `seriesIndex`, so a wrong index shows up here immediately.
+    private func logSeries() {
+        guard seriesIndex >= 0, seriesIndex < series.count else {
+            diag("series", "index out of range \(seriesIndex)/\(series.count) current=\(currentItem.name)")
+            return
+        }
+        let previous = seriesIndex > 0 ? series[seriesIndex - 1].name : "-"
+        let next = seriesIndex + 1 < series.count ? series[seriesIndex + 1].name : "-"
+        diag("series", "count=\(series.count) index=\(seriesIndex + 1) prev=\(previous) cur=\(series[seriesIndex].name) next=\(next)")
     }
 
     private func prepare(item: WebDAVItem, client: WebDAVClient, silent: Bool = false) async throws -> ComicPageSource {
         // Offline first: a downloaded chapter reads straight off disk, no
         // network round-trip and no waiting.
         if let local = await DownloadStore.shared.localSource(for: item.url) {
+            diag("prepare", "LOCAL \(item.name) pages=\(local.pageCount)")
             if !silent {
                 statusText = "正在读取本地下载…"
                 downloadProgress = nil
@@ -202,6 +238,7 @@ final class ReaderModel: ObservableObject {
             }
             let url = cacheURL
             let isPDF = item.isPDF
+            diag("prepare", "ARCHIVE \(item.name) cached=\(CacheManager.hasArchive(for: item.url))")
             do {
                 return try await Task.detached(priority: .userInitiated) { () -> ComicPageSource in
                     if isPDF { return try PDFComicSource(fileURL: url) }
@@ -221,10 +258,13 @@ final class ReaderModel: ObservableObject {
         guard !images.isEmpty else {
             throw ZipError.unsupported("这个文件夹里没有图片")
         }
+        diag("prepare", "NETDIR \(item.name) pages=\(images.count)")
         return FolderComicSource(items: images, client: client)
     }
 
     private func adopt(item: WebDAVItem, source: ComicPageSource, startPage: Int) {
+        diag("adopt", "name=\(item.name) pages=\(source.pageCount) startPage=\(startPage)")
+        preparedNext = nil
         currentItem = item
         self.source = source
         pageCount = source.pageCount

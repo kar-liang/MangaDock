@@ -159,8 +159,12 @@ final class DownloadStore: ObservableObject {
     }
 
     /// A local page source for a downloaded chapter, or nil if it isn't one.
+    @MainActor
     func localSource(for url: URL) async -> ComicPageSource? {
         guard let rec = record(for: url) else { return nil }
+        // Logged because "opened the wrong chapter" can smell like a download
+        // record resolving to a different file. This proves it either way.
+        diag("download", "hit req=\(url.lastPathComponent) rec=\(rec.name) pages=\(rec.pageCount)")
         let dir = Self.root.appendingPathComponent(rec.folderName, isDirectory: true)
         let isArchive = rec.isArchive
         let fileName = rec.fileName
