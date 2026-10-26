@@ -12,6 +12,12 @@ struct SeriesView: View {
     @ObservedObject private var reads = ReadStateStore.shared
     @State private var descending = false
 
+    // Bangumi 元数据：章节列表上方的卡片
+    @State private var bangumi: BangumiSubject?
+    @State private var bangumiLoading = false
+    @State private var bangumiTried = false
+    @State private var showBangumiPicker = false
+
     private var chapters: [WebDAVItem] {
         let items = loader.items.filter { $0.isDirectory || $0.isArchive || $0.isPDF }
         return descending ? items.reversed() : items
@@ -88,6 +94,7 @@ struct SeriesView: View {
                 }
                 offlineSection
             } else {
+                bangumiSection
                 downloadStatusSection
 
                 if let resume = resumeItem {
@@ -154,7 +161,69 @@ struct SeriesView: View {
             descending = PerComicPrefs.chapterOrderDescending(for: folder.url)
         }
         .task { await reload() }
+        .task { await loadBangumi() }
+        .sheet(isPresented: $showBangumiPicker) {
+            BangumiLinkView(seriesName: folder.displayName) { picked in
+                BangumiClient.shared.link(seriesURL: folder.url.absoluteString,
+                                          subjectID: picked.id)
+                bangumi = picked
+                bangumiTried = true
+            }
+        }
         .refreshable { await reload() }
+    }
+
+    /// 章节列表上方的 Bangumi 卡片。匹配不到就静默降级成一个手动关联入口，
+    /// 不要挡住阅读。
+    @ViewBuilder
+    private var bangumiSection: some View {
+        if let bangumi {
+            Section {
+                BangumiCard(subject: bangumi)
+            } footer: {
+                HStack {
+                    Text("元数据来自 Bangumi")
+                    Spacer()
+                    Button("更换") { showBangumiPicker = true }
+                        .font(.caption)
+                }
+            }
+        } else if bangumiLoading {
+            Section {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在匹配 Bangumi…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        } else if bangumiTried && BangumiClient.shared.isEnabled {
+            Section {
+                Button {
+                    showBangumiPicker = true
+                } label: {
+                    Label("关联 Bangumi 条目", systemImage: "link")
+                }
+            } footer: {
+                Text("没自动对上这本书。可以手动搜一下，不关联也不影响阅读。")
+            }
+        }
+    }
+
+    private func loadBangumi() async {
+        guard BangumiClient.shared.isEnabled, !bangumiTried else { return }
+        // 这条线路连不上时别干等，直接收起
+        if BangumiClient.shared.shouldSkipForNow() {
+            bangumiTried = true
+            return
+        }
+        bangumiLoading = true
+        bangumi = await BangumiClient.shared.subject(
+            forSeriesNamed: folder.displayName,
+            seriesURL: folder.url.absoluteString
+        )
+        bangumiLoading = false
+        bangumiTried = true
     }
 
     // MARK: - Rows

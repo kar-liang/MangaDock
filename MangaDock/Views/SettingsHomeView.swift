@@ -117,6 +117,8 @@ struct ReadingSettingsView: View {
     @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
     @AppStorage("mangadock.tab.files") private var showFilesTab = true
     @AppStorage("mangadock.tab.history") private var showHistoryTab = false
+    @AppStorage("mangadock.bangumi.enabled") private var bangumiEnabled = true
+    @AppStorage("mangadock.bangumi.base") private var bangumiBase = ""
 
     var body: some View {
         Form {
@@ -173,6 +175,21 @@ struct ReadingSettingsView: View {
                 Text("显示")
             } footer: {
                 Text("已经手动设过视图的目录会保留原来的记忆，新目录跟随「默认视图」。")
+            }
+
+            Section {
+                Toggle("显示 Bangumi 元数据", isOn: $bangumiEnabled)
+                TextField("接口地址（留空用官方）", text: $bangumiBase)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                Button("清除元数据缓存") {
+                    BangumiClient.shared.clearCache()
+                }
+            } header: {
+                Text("Bangumi 元数据")
+            } footer: {
+                Text("在章节列表上方显示封面、简介、评分、标签。名字对不上时会给你一个手动关联入口。\n官方地址 api.bgm.tv 在部分网络下连不通（DNS 污染），可以填自建转发地址，形如 https://你的域名/bgm/v0。")
             }
 
             Section {
