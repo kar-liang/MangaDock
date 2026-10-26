@@ -1,6 +1,6 @@
 import Foundation
 
-struct WebDAVItem: Identifiable, Hashable {
+struct WebDAVItem: Identifiable, Hashable, Codable {
     let url: URL
     let name: String
     let isDirectory: Bool

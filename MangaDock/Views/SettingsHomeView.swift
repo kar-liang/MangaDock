@@ -280,6 +280,8 @@ struct StorageSettingsView: View {
             Button("清除", role: .destructive) {
                 CacheManager.clear()
                 CoverStore.shared.clearMemory()
+                BangumiImageCache.shared.clear()
+                FolderLoader.clearDiskCache()
                 refreshCacheSize()
             }
             Button("取消", role: .cancel) {}
