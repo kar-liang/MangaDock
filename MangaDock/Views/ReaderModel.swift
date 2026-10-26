@@ -305,10 +305,16 @@ final class ReaderModel: ObservableObject {
     private var preparedNext: (index: Int, source: ComicPageSource)?
     private var preloadingNext = false
 
+    /// 下一话预取多少页。prepare 只把页面列表列出来，图仍然要翻到才下载，
+    /// 所以这里把开头几页先抓下来 —— 翻过去才是真的秒开。
+    private static let prefetchPages = 5
+    /// 距离结尾还有这么多页时就开始准备。
+    private static let preloadTrigger = 5
+
     /// Background-prepares the next chapter once the reader is near the end,
     /// so tapping/overscrolling into it is instant.
     func preloadNextChapterIfNeeded() {
-        guard let client, pageCount > 0, index >= pageCount - 2 else { return }
+        guard let client, pageCount > 0, index >= pageCount - Self.preloadTrigger else { return }
         let target = seriesIndex + 1
         guard target >= 0, target < series.count else { return }
         guard preparedNext?.index != target, !preloadingNext else { return }
@@ -317,10 +323,25 @@ final class ReaderModel: ObservableObject {
         let item = series[target]
         Task { [weak self] in
             guard let self else { return }
-            if let source = try? await self.prepare(item: item, client: client, silent: true) {
-                self.preparedNext = (target, source)
+            defer { self.preloadingNext = false }
+            guard let source = try? await self.prepare(item: item, client: client, silent: true) else {
+                return
             }
-            self.preloadingNext = false
+            self.preparedNext = (target, source)
+            // 只对远程目录源预取。本地解压 / PDF 渲染本来就不用等网络，
+            // 预取纯属浪费 IO 和 CPU。
+            if source is FolderComicSource {
+                await Self.fetchLeadingPages(of: source)
+            }
+        }
+    }
+
+    private static func fetchLeadingPages(of source: ComicPageSource) async {
+        let total = source.pageCount
+        guard total > 0 else { return }
+        for index in 0..<min(total, prefetchPages) {
+            if Task.isCancelled { return }
+            _ = try? await source.pageData(at: index)
         }
     }
 
