@@ -106,20 +106,11 @@ struct BangumiCard: View {
     }
 
     private var cover: some View {
-        Group {
-            if let url = subject.coverURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        placeholder
-                    }
-                }
-            } else {
-                placeholder
-            }
+        // 缓存命中就同步画出来，不会先闪一下灰块
+        CachedAsyncImage(url: subject.coverURL) {
+            placeholder
         }
+        .scaledToFill()
         .frame(width: 144, height: 192)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }

@@ -27,20 +27,12 @@ struct BangumiCharactersRow: View {
     private func card(_ character: BangumiCharacter) -> some View {
         VStack(spacing: 6) {
             Group {
-                if let url = character.portraitURL {
-                    AsyncImage(url: url) { phase in
-                        if case .success(let image) = phase {
-                            image.resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 72, height: 96, alignment: .top)
-                                .clipped()
-                        } else {
-                            placeholder
-                        }
-                    }
-                } else {
+                CachedAsyncImage(url: character.portraitURL) {
                     placeholder
                 }
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 72, height: 96, alignment: .top)
+                .clipped()
             }
             .frame(width: 72, height: 96)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

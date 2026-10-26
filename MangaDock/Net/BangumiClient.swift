@@ -53,7 +53,7 @@ struct BangumiSubject: Codable, Identifiable, Hashable {
 
     /// 封面地址，挑一个分辨率够用又不浪费流量的。
     var coverURL: URL? {
-        for candidate in [images?.common, images?.medium, images?.large, images?.small] {
+        for candidate in [images?.medium, images?.common, images?.large, images?.small] {
             if let s = candidate, let url = URL(string: s) { return url }
         }
         return nil
