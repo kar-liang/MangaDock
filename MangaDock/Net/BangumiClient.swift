@@ -261,11 +261,18 @@ final class BangumiClient {
 
     /// 书架上用的封面。只用已经缓存的数据，不额外发搜索请求 ——
     /// 搜索走 `enqueueResolve`，在后台慢慢补。
+    @MainActor
     func coverImage(forSeriesURL url: String) async -> UIImage? {
         guard isEnabled, let subject = cachedSubject(forSeriesURL: url) else { return nil }
         if let cached = coverImages[subject.id] { return cached }
-        guard let cover = subject.coverURL, let data = await get(cover),
-              let image = UIImage(data: data) else {
+        guard let cover = subject.coverURL else { return nil }
+
+        // 复用图片磁盘缓存：冷启动后不必为了书架封面重新下载一遍
+        if let hit = BangumiImageCache.shared.cached(cover) {
+            coverImages[subject.id] = hit
+            return hit
+        }
+        guard let data = await get(cover), let image = UIImage(data: data) else {
             // 图片拉不下来（离线/被墙）不算匹配失败，下次再试
             return nil
         }
