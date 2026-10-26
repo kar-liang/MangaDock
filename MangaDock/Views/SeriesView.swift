@@ -232,6 +232,23 @@ struct SeriesView: View {
 
     private func loadBangumi() async {
         guard BangumiClient.shared.isEnabled, !bangumiTried else { return }
+
+        // 本地已经有这个条目的缓存：同步赋值，直接显示，不留 loading 行
+        let seriesKey = folder.url.absoluteString
+        if let cached = BangumiClient.shared.cachedSubject(forSeriesURL: seriesKey) {
+            bangumi = cached
+            bangumiTried = true
+            if let chars = BangumiClient.shared.cachedCharacters(subjectID: cached.id) {
+                bangumiCharacters = chars
+            } else {
+                // 只有元数据缓存、没有角色缓存：后台补，不阻塞首帧
+                Task {
+                    bangumiCharacters = await BangumiClient.shared.characters(subjectID: cached.id)
+                }
+            }
+            return
+        }
+
         // 这条线路连不上时别干等，直接收起
         if BangumiClient.shared.shouldSkipForNow() {
             bangumiTried = true

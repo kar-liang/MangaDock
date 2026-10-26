@@ -313,7 +313,7 @@ final class BangumiClient {
     // MARK: Characters
 
     func characters(subjectID: Int) async -> [BangumiCharacter] {
-        if let cached = loadCachedCharacters(subjectID: subjectID) { return cached }
+        if let cached = cachedCharacters(subjectID: subjectID) { return cached }
 
         guard let url = URL(string: "\(baseURL)/subjects/\(subjectID)/characters") else { return [] }
         guard let data = await get(url) else { return [] }
@@ -423,7 +423,8 @@ final class BangumiClient {
         cacheFolder.appendingPathComponent("characters-\(id).json")
     }
 
-    private func loadCachedCharacters(subjectID: Int) -> [BangumiCharacter]? {
+    /// 同步读角色缓存（只读磁盘，不发请求）。
+    func cachedCharacters(subjectID: Int) -> [BangumiCharacter]? {
         guard let data = try? Data(contentsOf: characterCacheURL(id: subjectID)) else { return nil }
         return try? JSONDecoder().decode([BangumiCharacter].self, from: data)
     }

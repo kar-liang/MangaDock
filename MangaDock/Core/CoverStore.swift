@@ -51,7 +51,15 @@ enum CoverBuilder {
         }
 
         if item.isDirectory {
-            guard let children = try? await client.list(item.requestURL) else { return nil }
+            // 目录内容可能刚被系列页列过，先查缓存
+            var children = await MainActor.run { FolderLoader.cachedItems(for: item.requestURL) }
+            if children == nil {
+                children = try? await client.list(item.requestURL)
+                if let children {
+                    await MainActor.run { FolderLoader.store(children, for: item.requestURL) }
+                }
+            }
+            guard let children else { return nil }
             if let firstImage = children.first(where: { !$0.isDirectory && $0.isImage }) {
                 guard let data = try? await client.data(for: firstImage.url) else { return nil }
                 return await decode(data)

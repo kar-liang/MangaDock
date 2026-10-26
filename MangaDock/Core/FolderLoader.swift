@@ -65,6 +65,28 @@ final class FolderLoader: ObservableObject {
         }
     }
 
+    /// 给别的高频调用点用（阅读器切章、生成封面）：
+    /// 只查缓存，不发请求。内存没有就看磁盘。
+    static func cachedItems(for url: URL) -> [WebDAVItem]? {
+        let key = url.absoluteString
+        if let hit = cache[key] { return hit }
+        guard let disk = readDisk(key), !disk.isEmpty else { return nil }
+        cache[key] = disk
+        touch(key)
+        while order.count > memoryLimit {
+            cache.removeValue(forKey: order.removeFirst())
+        }
+        return disk
+    }
+
+    /// 别处自己列了目录后回填，让后续调用也能命中。
+    static func store(_ items: [WebDAVItem], for url: URL) {
+        guard !items.isEmpty else { return }
+        let key = url.absoluteString
+        remember(key, items)
+        writeDisk(key, items)
+    }
+
     /// 目录内容变了时让缓存失效（内存 + 磁盘）。
     static func invalidate(url: URL?) {
         guard let url else { return }

@@ -162,16 +162,20 @@ final class ReaderModel: ObservableObject {
     /// were downloaded, so chapter-to-chapter reading still works with no
     /// network at all.
     private func buildSeries(client: WebDAVClient) async {
-        guard let parent = Self.parentURL(of: currentItem.url),
-              let children = try? await client.list(parent) else {
-            let offline = DownloadStore.shared.downloadedSiblings(of: currentItem)
-            if let index = offline.firstIndex(where: { $0.id == currentItem.id }) {
-                series = offline
-                seriesIndex = index
-            } else {
-                series = [currentItem]
-                seriesIndex = 0
-            }
+        guard let parent = Self.parentURL(of: currentItem.url) else {
+            fallbackSeries()
+            return
+        }
+
+        // 父目录几乎一定刚在系列页列过。先用缓存，避免每切一章都打一次
+        // PROPFIND —— 这是全 App 频率最高的重复请求。
+        var children = FolderLoader.cachedItems(for: parent)
+        if children == nil, let fresh = try? await client.list(parent) {
+            FolderLoader.store(fresh, for: parent)
+            children = fresh
+        }
+        guard let children, !children.isEmpty else {
+            fallbackSeries()
             return
         }
 
@@ -195,6 +199,18 @@ final class ReaderModel: ObservableObject {
             seriesIndex = 0
         }
         logSeries()
+    }
+
+    /// 列不到目录时的兜底：只用已下载的章节，断网也能连续读。
+    private func fallbackSeries() {
+        let offline = DownloadStore.shared.downloadedSiblings(of: currentItem)
+        if let index = offline.firstIndex(where: { $0.id == currentItem.id }) {
+            series = offline
+            seriesIndex = index
+        } else {
+            series = [currentItem]
+            seriesIndex = 0
+        }
     }
 
     /// Records the series the reader computed. The chapter label is derived
