@@ -25,18 +25,18 @@ struct BangumiCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
                 cover
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(subject.displayTitle)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.title3.weight(.bold))
                         .lineLimit(2)
 
                     if subject.displayTitle != subject.name {
                         Text(subject.name)
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
@@ -45,28 +45,28 @@ struct BangumiCard: View {
                         if let scoreText {
                             HStack(spacing: 3) {
                                 Image(systemName: "star.fill")
-                                    .font(.system(size: 9))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.orange)
                                 Text(scoreText)
-                                    .font(.caption.weight(.semibold))
+                                    .font(.subheadline.weight(.bold))
                                     .foregroundColor(.orange)
                             }
                         }
                         if let ratingCount {
                             Text(ratingCount)
-                                .font(.caption2)
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                         if let date = subject.date, !date.isEmpty {
                             Text(date)
-                                .font(.caption2)
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
 
                     if let authors = subject.authors {
                         Text("作者 \(authors)")
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
@@ -77,8 +77,9 @@ struct BangumiCard: View {
 
             if let summary = subject.summary, !summary.isEmpty {
                 Text(summary)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundColor(.secondary)
+                    .lineSpacing(2)
                     .lineLimit(expanded ? nil : 3)
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
@@ -89,9 +90,9 @@ struct BangumiCard: View {
                 HStack(spacing: 5) {
                     ForEach(topTags, id: \.self) { tag in
                         Text(tag)
-                            .font(.system(size: 10))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
                             .background(Color.accentColor.opacity(0.12), in: Capsule())
                             .foregroundColor(.accentColor)
                             .lineLimit(1)
@@ -100,7 +101,7 @@ struct BangumiCard: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
 
@@ -119,8 +120,8 @@ struct BangumiCard: View {
                 placeholder
             }
         }
-        .frame(width: 66, height: 90)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .frame(width: 80, height: 108)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
     private var placeholder: some View {

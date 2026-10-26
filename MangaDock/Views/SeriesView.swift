@@ -192,7 +192,7 @@ struct SeriesView: View {
                     Text("元数据来自 Bangumi")
                     Spacer()
                     Button("更换") { showBangumiPicker = true }
-                        .font(.caption)
+                        .font(.footnote)
                 }
             }
         } else if bangumiLoading {

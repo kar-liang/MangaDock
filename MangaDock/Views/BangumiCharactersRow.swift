@@ -14,7 +14,7 @@ struct BangumiCharactersRow: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
                 ForEach(shown) { character in
                     Button {
                         selected = character
@@ -25,15 +25,16 @@ struct BangumiCharactersRow: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 4)
+            .padding(.vertical, 8)
         }
+        .frame(height: 186)
         .sheet(item: $selected) { character in
             BangumiCharacterDetail(character: character)
         }
     }
 
     private func card(_ character: BangumiCharacter) -> some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 6) {
             Group {
                 if let url = character.portraitURL {
                     AsyncImage(url: url) { phase in
@@ -47,24 +48,24 @@ struct BangumiCharactersRow: View {
                     placeholder
                 }
             }
-            .frame(width: 78, height: 78)
+            .frame(width: 88, height: 118)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             Text(character.name)
-                .font(.caption)
+                .font(.footnote.weight(.medium))
                 .lineLimit(1)
-                .frame(width: 78)
+                .frame(width: 88)
 
             if let relation = character.relation, !relation.isEmpty {
                 Text(relation)
-                    .font(.system(size: 9))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1.5)
+                    .font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
                     .background(badgeColor(relation).opacity(0.15), in: Capsule())
                     .foregroundColor(badgeColor(relation))
             }
         }
-        .frame(width: 78)
+        .frame(width: 88)
         .contentShape(Rectangle())
     }
 
