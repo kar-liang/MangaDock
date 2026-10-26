@@ -14,7 +14,7 @@ struct BangumiCharactersRow: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
                 ForEach(shown) { character in
                     Button {
                         selected = character
@@ -27,7 +27,7 @@ struct BangumiCharactersRow: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
-        .frame(height: 186)
+        .frame(height: 160)
         .sheet(item: $selected) { character in
             BangumiCharacterDetail(character: character)
         }
@@ -41,7 +41,7 @@ struct BangumiCharactersRow: View {
                         if case .success(let image) = phase {
                             image.resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(width: 88, height: 118, alignment: .top)
+                                .frame(width: 72, height: 96, alignment: .top)
                                 .clipped()
                         } else {
                             placeholder
@@ -51,13 +51,14 @@ struct BangumiCharactersRow: View {
                     placeholder
                 }
             }
-            .frame(width: 88, height: 118)
+            .frame(width: 72, height: 96)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             Text(character.name)
-                .font(.footnote.weight(.medium))
+                .font(.caption.weight(.medium))
                 .lineLimit(1)
-                .frame(width: 88)
+                .minimumScaleFactor(0.85)
+                .frame(width: 72)
 
             if let relation = character.relation, !relation.isEmpty {
                 Text(relation)
@@ -68,7 +69,7 @@ struct BangumiCharactersRow: View {
                     .foregroundColor(badgeColor(relation))
             }
         }
-        .frame(width: 88)
+        .frame(width: 72)
         .contentShape(Rectangle())
     }
 
@@ -99,7 +100,7 @@ struct BangumiCharacterDetail: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 14) {
+                    HStack(alignment: .top, spacing: 12) {
                         Group {
                             if let url = character.portraitURL {
                                 AsyncImage(url: url) { phase in
