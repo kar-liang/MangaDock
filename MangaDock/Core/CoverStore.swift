@@ -1,6 +1,12 @@
 import Foundation
 import UIKit
 
+extension Notification.Name {
+    /// Posted when a user-chosen cover is added, removed or pulled from sync,
+    /// so visible grid cells reload their image.
+    static let coversDidChange = Notification.Name("mangadock.coversDidChange")
+}
+
 /// Builds and caches grid thumbnails. Covers come from three places, cheapest first:
 /// a locally cached archive, the first image of a folder, or a byte-range read of
 /// the remote CBZ (no full download just to show a cover).
@@ -103,6 +109,11 @@ final class CoverStore {
 
     // MARK: - Custom covers
 
+    /// Covers the user picked themselves, as recorded on disk.
+    var customCovers: [CustomCoverEntry] {
+        CacheManager.loadCustomCoverManifest()
+    }
+
     func hasCustomCover(for item: WebDAVItem) -> Bool {
         CacheManager.hasManualCover(key: item.id)
     }
@@ -113,13 +124,47 @@ final class CoverStore {
               let data = prepared.jpegData(compressionQuality: 0.86) else { return nil }
         CacheManager.storeCover(data, key: item.id)
         CacheManager.markManualCover(key: item.id)
+        recordManifest(itemID: item.id, updatedAt: Date())
         images[item.id] = prepared
+        NotificationCenter.default.post(name: .coversDidChange, object: nil)
         return prepared
     }
 
     func removeCustomCover(for item: WebDAVItem) {
         CacheManager.deleteCover(key: item.id)
         images[item.id] = nil
+        dropManifest(itemID: item.id)
+        NotificationCenter.default.post(name: .coversDidChange, object: nil)
+    }
+
+    /// Stores a cover that arrived from another device. Returns false when the
+    /// bytes aren't a usable image.
+    @discardableResult
+    func adoptSyncedCover(_ data: Data, itemID: String, updatedAt: Date) -> Bool {
+        guard let image = UIImage(data: data) else { return false }
+        CacheManager.storeCover(data, key: itemID)
+        CacheManager.markManualCover(key: itemID)
+        recordManifest(itemID: itemID, updatedAt: updatedAt)
+        images[itemID] = image
+        NotificationCenter.default.post(name: .coversDidChange, object: nil)
+        return true
+    }
+
+    private func recordManifest(itemID: String, updatedAt: Date) {
+        var list = CacheManager.loadCustomCoverManifest()
+        list.removeAll { $0.itemID == itemID }
+        list.append(CustomCoverEntry(itemID: itemID,
+                                     hash: CacheManager.hash(itemID),
+                                     updatedAt: updatedAt))
+        CacheManager.saveCustomCoverManifest(list)
+    }
+
+    private func dropManifest(itemID: String) {
+        var list = CacheManager.loadCustomCoverManifest()
+        let before = list.count
+        list.removeAll { $0.itemID == itemID }
+        guard list.count != before else { return }
+        CacheManager.saveCustomCoverManifest(list)
     }
 
     /// Center-crop to 2:3 and shrink to 600×900 so every card lines up.

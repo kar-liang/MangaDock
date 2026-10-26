@@ -40,7 +40,12 @@ final class ReaderModel: ObservableObject {
 
     init(item: WebDAVItem) {
         currentItem = item
-        imageCache.countLimit = 10
+        imageCache.countLimit = 12
+        // Budget by BYTES, not by entry count: one 2200px webtoon page is
+        // ~25 MB decoded, so "10 items" could mean 250 MB and iOS would start
+        // killing caches behind our back (which is one source of the black
+        // flash mid-scroll).
+        imageCache.totalCostLimit = 160 * 1024 * 1024
     }
 
     func aspect(for position: Int) -> CGFloat {
@@ -85,6 +90,8 @@ final class ReaderModel: ObservableObject {
         PerComicPrefs.setEnhance(on, for: currentItem.url)
         PerComicPrefs.setAIScale(aiScale, for: currentItem.url)
         imageCache.removeAllObjects()
+        prewarming.removeAll()
+        pageTasks.removeAll()
         enhanceGeneration += 1
         prewarm(from: index + 1)
     }
@@ -223,6 +230,10 @@ final class ReaderModel: ObservableObject {
         pageCount = source.pageCount
         index = min(max(0, startPage), max(0, pageCount - 1))
         imageCache.removeAllObjects()
+        // Stale in-flight positions from the previous chapter would otherwise
+        // block prewarming for the new one.
+        prewarming.removeAll()
+        pageTasks.removeAll()
         downloadProgress = nil
         chapterError = nil
         // Per-comic enhance/scale, falling back to the global defaults.
@@ -308,11 +319,13 @@ final class ReaderModel: ObservableObject {
     // MARK: - Page images
 
     func image(at position: Int) async -> UIImage? {
-        // Two cache slots per page: plain and enhanced, so toggling is instant.
-        let key = NSNumber(value: position * 2 + (enhance ? 1 : 0))
-        if let cached = imageCache.object(forKey: key) { return cached }
-        return await preparePage(position)
+        await preparePage(position)
     }
+
+    /// Decodes already running, keyed by cache key. A visible page used to
+    /// start a second decode of the very bytes its pre-render was already
+    /// working on — that duplicated work is half of the perceived lag.
+    private var pageTasks: [Int: Task<UIImage?, Never>] = [:]
 
     /// Decodes + enhances a page and stores it in the cache. Used both for the
     /// visible page and for background pre-rendering of upcoming pages.
@@ -320,9 +333,26 @@ final class ReaderModel: ObservableObject {
     private func preparePage(_ position: Int) async -> UIImage? {
         guard let source, position >= 0, position < source.pageCount else { return nil }
 
-        let key = NSNumber(value: position * 2 + (enhance ? 1 : 0))
+        let cacheKey = position * 2 + (enhance ? 1 : 0)
+        let key = NSNumber(value: cacheKey)
         if let cached = imageCache.object(forKey: key) { return cached }
 
+        // Join the in-flight decode instead of starting another one.
+        if let running = pageTasks[cacheKey] {
+            return await running.value
+        }
+
+        let task = Task<UIImage?, Never> { [weak self] in
+            guard let self else { return nil }
+            return await self.decode(position: position, source: source, key: key)
+        }
+        pageTasks[cacheKey] = task
+        let image = await task.value
+        pageTasks[cacheKey] = nil
+        return image
+    }
+
+    private func decode(position: Int, source: ComicPageSource, key: NSNumber) async -> UIImage? {
         do {
             let data = try await source.pageData(at: position)
             let wantsEnhance = enhance
@@ -338,7 +368,7 @@ final class ReaderModel: ObservableObject {
             // page) — acceptable because it only runs when enhance is on.
             if useAI, let decoded,
                let ai = await ImageEnhancer.enhanceAI(decoded, scale: AIEnhancer.Scale(rawValue: aiScale) ?? .two) {
-                imageCache.setObject(ai, forKey: key)
+                imageCache.setObject(ai, forKey: key, cost: Self.cost(of: ai))
                 let size = ai.size
                 if size.height > 0 {
                     pageAspects[position] = size.width / size.height
@@ -347,7 +377,7 @@ final class ReaderModel: ObservableObject {
             }
 
             if let decoded {
-                imageCache.setObject(decoded, forKey: key)
+                imageCache.setObject(decoded, forKey: key, cost: Self.cost(of: decoded))
                 let size = decoded.size
                 if size.height > 0 {
                     pageAspects[position] = size.width / size.height
@@ -359,20 +389,35 @@ final class ReaderModel: ObservableObject {
         }
     }
 
-    /// Background pre-renders the next few pages so turning the page is instant.
-    /// Only meaningful when AI enhancement is on (that's the slow path); the GPU
-    /// pipeline is already fast enough that pre-warming would just waste power.
     /// Pages currently being pre-rendered, so repeated triggers don't queue
     /// duplicate work (onAppear fires often while scrolling).
     private var prewarming: Set<Int> = []
 
-    func prewarm(from index: Int, count: Int = 2) {
-        guard enhance, ImageEnhancer.hasAIModel, pageCount > 0 else { return }
-        let end = min(pageCount, index + count)
-        guard index < end else { return }
+    /// Background pre-renders the next few pages so turning or scrolling is
+    /// instant.
+    ///
+    /// This runs in BOTH modes. It used to be gated on AI enhancement, on the
+    /// theory that plain decoding was fast enough — it isn't: decoding a
+    /// 2200px webtoon page costs a few hundred milliseconds, which is exactly
+    /// the "black page + spinner" you'd see after flicking ahead.
+    func prewarm(from index: Int, count: Int = 3) {
+        guard source != nil, pageCount > 0 else { return }
+        // AI super-resolution takes seconds per page, so don't run ahead as far.
+        let wanted = (enhance && ImageEnhancer.hasAIModel) ? min(count, 2) : count
+        let end = min(pageCount, index + wanted)
+        guard index >= 0, index < end else { return }
+
+        // Cache key depends on the mode — the old code always probed the
+        // enhanced slot, so with enhancement off nothing ever counted as
+        // "already rendered" and every prewarm re-decoded the page.
+        let slot = enhance ? 1 : 0
 
         for position in index..<end {
-            let key = NSNumber(value: position * 2 + 1)  // enhanced slot
+            // At most two background decodes at a time: the visible page keeps
+            // its CPU share and the memory peak stays sane.
+            if prewarming.count >= 2 { break }
+
+            let key = NSNumber(value: position * 2 + slot)
             guard imageCache.object(forKey: key) == nil,
                   !prewarming.contains(position) else { continue }
             prewarming.insert(position)
@@ -381,6 +426,14 @@ final class ReaderModel: ObservableObject {
                 self?.prewarming.remove(position)
             }
         }
+    }
+
+    /// Decoded byte size, for NSCache's byte-based eviction.
+    private static func cost(of image: UIImage) -> Int {
+        if let cg = image.cgImage {
+            return cg.bytesPerRow * cg.height
+        }
+        return Int(image.size.width * image.size.height * 4)
     }
 
     // MARK: - Helpers

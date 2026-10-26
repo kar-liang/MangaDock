@@ -58,16 +58,27 @@ final class AppStore: ObservableObject {
     }
 
     /// Manual "上传同步": local state replaces the server copy.
+    /// Covers ride along as separate image files (see `CoverSyncService`).
     func uploadSync() async -> String {
         guard isConfigured else { return "还没有配置服务器" }
-        return await SyncService.pushNow(store: self, shelf: ShelfStore.shared.entries)
+        var parts: [String] = []
+        parts.append(await SyncService.pushNow(store: self, shelf: ShelfStore.shared.entries))
+        if let coverNote = await CoverSyncService.push(store: self) {
+            parts.append(coverNote)
+        }
+        return parts.joined(separator: "；")
     }
 
     /// Manual "下载同步": the server copy replaces local state (explicit user
     /// choice, so no last-write-wins veto).
     func downloadSync() async -> String {
         guard isConfigured else { return "还没有配置服务器" }
-        return await SyncService.pullNow(store: self, shelfStore: ShelfStore.shared)
+        var parts: [String] = []
+        parts.append(await SyncService.pullNow(store: self, shelfStore: ShelfStore.shared))
+        if let coverNote = await CoverSyncService.pull(store: self) {
+            parts.append(coverNote)
+        }
+        return parts.joined(separator: "；")
     }
 
     // MARK: - Derived

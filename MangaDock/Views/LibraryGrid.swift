@@ -70,6 +70,17 @@ struct CoverBox: View {
             .task(id: item.id) {
                 await loadCover()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .coversDidChange)) { _ in
+                // A cover was added, removed, or pulled from another device.
+                // Pick it up from memory first, otherwise re-read from disk.
+                if let fresh = CoverStore.shared.image(for: item) {
+                    image = fresh
+                } else {
+                    image = nil
+                    attempted = false
+                    Task { await loadCover() }
+                }
+            }
     }
 
     @ViewBuilder

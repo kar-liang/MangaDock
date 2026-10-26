@@ -189,7 +189,7 @@ struct ServerSettingsView: View {
                 } header: {
                     Text("本地数据")
                 } footer: {
-                    Text("缓存的是下载过的 CBZ、看过的散图和网格封面，清掉不影响服务器上的文件。")
+                    Text("缓存的是下载过的 CBZ、看过的散图和自动生成的封面，清掉不影响服务器上的文件。你自己设置的自定义封面不算缓存，不会被清掉。")
                 }
 
                 Section {
@@ -266,7 +266,7 @@ struct ServerSettingsView: View {
                 } header: {
                     Text("多设备同步")
                 } footer: {
-                    Text("进度、书架、设置会存到 WebDAV 服务器上的隐藏文件（.mangadock-sync.json）。开关打开时多台设备自动同步，最后写入的为准；「上传同步」用本机覆盖云端，「下载同步」用云端覆盖本机，两个方向都由你手动决定。密码不会同步，每台设备自己填。")
+                    Text("进度、书架、设置存到服务器上的隐藏文件（.mangadock-sync.json），你自己设置的封面单独存在 .mangadock-covers 目录。开关打开时多台设备自动同步，最后写入的为准；「上传同步」用本机覆盖云端，「下载同步」用云端覆盖本机，两个方向都由你手动决定。密码不会同步，每台设备自己填。")
                 }
 
                 Section {

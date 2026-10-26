@@ -114,13 +114,27 @@ final class WebDAVClient: @unchecked Sendable {
         return data
     }
 
-    /// PUT a small file (used for the multi-device sync payload).
-    func upload(_ data: Data, to url: URL) async throws {
+    /// PUT a file (used for the multi-device sync payload and cover images).
+    func upload(_ data: Data, to url: URL, contentType: String = "application/json") async throws {
         var request = makeRequest(url: url, method: "PUT")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         let (_, response) = try await session.upload(for: request, from: data)
         guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
         guard (200...299).contains(http.statusCode) else { throw WebDAVError.badStatus(http.statusCode) }
+    }
+
+    /// Creates a collection (directory). Servers answer 405 (or 301) when it
+    /// already exists — for our purposes that counts as success.
+    func makeCollection(_ url: URL) async throws {
+        let request = makeRequest(url: WebDAVItem.directoryURL(url), method: "MKCOL")
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
+        switch http.statusCode {
+        case 200...299, 301, 405:
+            return
+        default:
+            throw WebDAVError.badStatus(http.statusCode)
+        }
     }
 
     func download(_ url: URL, to destination: URL,
