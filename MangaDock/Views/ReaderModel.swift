@@ -308,6 +308,32 @@ final class ReaderModel: ObservableObject {
         }
     }
 
+    /// Jumps to any chapter of this series (reader's chapter picker). Unlike
+    /// `advanceChapter` it can move an arbitrary distance.
+    @discardableResult
+    func jump(to target: Int, startPage: Int = 0) async -> Bool {
+        guard let client, target >= 0, target < series.count, target != seriesIndex else {
+            return false
+        }
+
+        let item = series[target]
+        chapterError = nil
+        isLoading = true
+
+        do {
+            let prepared = try await prepare(item: item, client: client)
+            adopt(item: item, source: prepared, startPage: startPage)
+            seriesIndex = target
+            isLoading = false
+            diag("reader", "jump to=\(item.name) startPage=\(startPage)")
+            return true
+        } catch {
+            chapterError = Self.message(for: error)
+            isLoading = false
+            return false
+        }
+    }
+
     @discardableResult
     func advanceChapter(direction: Int) async -> Bool {
         guard let client else { return false }

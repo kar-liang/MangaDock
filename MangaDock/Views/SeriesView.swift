@@ -9,6 +9,7 @@ struct SeriesView: View {
     @EnvironmentObject private var store: AppStore
     @StateObject private var loader = FolderLoader()
     @ObservedObject private var downloads = DownloadStore.shared
+    @ObservedObject private var reads = ReadStateStore.shared
     @State private var descending = false
 
     private var chapters: [WebDAVItem] {
@@ -39,6 +40,22 @@ struct SeriesView: View {
     private var currentFraction: Double {
         guard let key = downloads.queue.first else { return 0 }
         return downloads.progress[key] ?? 0
+    }
+
+    /// How many chapters are finished (manual mark or reached the last page).
+    private var readCount: Int {
+        chapters.filter { isRead($0) }.count
+    }
+
+    /// Manual mark wins; otherwise "read to the last page" counts.
+    private func isRead(_ chapter: WebDAVItem) -> Bool {
+        reads.isRead(chapter.url, progress: store.recentEntry(for: chapter.url))
+    }
+
+    private func toggleRead(_ chapter: WebDAVItem) {
+        let now = isRead(chapter)
+        reads.setRead(!now, for: chapter.url)
+        diag("read", "mark read=\(!now) name=\(chapter.name)")
     }
 
     /// Most recently read chapter of this series, if any.
@@ -93,9 +110,7 @@ struct SeriesView: View {
                     } header: {
                         Text("章节（\(chapters.count)）")
                     } footer: {
-                        if downloadedCount > 0 {
-                            Text("已下载 \(downloadedCount) 章，没网也能看。左滑章节可以单独下载或删除。")
-                        }
+                        Text("\(readCount)/\(chapters.count) 章已读。右滑左滑都能操作：右滑标已读/未读，左滑下载。")
                     }
                 }
 
@@ -140,11 +155,22 @@ struct SeriesView: View {
     @ViewBuilder
     private func chapterRow(_ chapter: WebDAVItem) -> some View {
         let state = downloads.state(for: chapter.url)
+        let read = isRead(chapter)
 
         NavigationLink(value: NavTarget.comic(chapter)) {
             ChapterRow(item: chapter,
                        progress: store.recentEntry(for: chapter.url),
-                       download: state)
+                       download: state,
+                       isRead: read)
+        }
+        .swipeActions(edge: .leading) {
+            Button {
+                toggleRead(chapter)
+            } label: {
+                Label(read ? "标为未读" : "标为已读",
+                      systemImage: read ? "circle" : "checkmark.circle")
+            }
+            .tint(.gray)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if state == .done {
@@ -170,6 +196,13 @@ struct SeriesView: View {
             }
         }
         .contextMenu {
+            Button {
+                toggleRead(chapter)
+            } label: {
+                Label(read ? "标为未读" : "标为已读",
+                      systemImage: read ? "circle" : "checkmark.circle")
+            }
+
             if state == .done {
                 Button(role: .destructive) {
                     downloads.remove(chapter.url)
@@ -328,16 +361,18 @@ private struct ChapterRow: View {
     let item: WebDAVItem
     let progress: RecentEntry?
     let download: DownloadState
+    let isRead: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: iconName)
-                .foregroundColor(iconColor)
+            Image(systemName: isRead ? "checkmark.circle" : iconName)
+                .foregroundColor(isRead ? Color.secondary : iconColor)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.displayName)
                     .lineLimit(2)
+                    .foregroundColor(isRead ? .secondary : .primary)
                 if let progress {
                     Text(progress.progressText)
                         .font(.caption2)

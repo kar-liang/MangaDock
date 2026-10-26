@@ -7,6 +7,8 @@ struct ReaderView: View {
 
     @State private var showBars = true
     @State private var verticalOverride: Bool? = nil
+    /// Chapter picker sheet (jump anywhere in the series without leaving).
+    @State private var showChapterList = false
     /// Guards the "pull past bottom → next chapter" jump against re-firing.
     @State private var chapterJumpArmed = false
     /// Current scroll phase — a chapter jump is only allowed while the user is
@@ -45,8 +47,14 @@ struct ReaderView: View {
             Color.black.ignoresSafeArea()
             content
 
-            if showBars && readerReady {
-                bars
+            if showBars {
+                if readerReady {
+                    bars
+                } else {
+                    // Loading (or failed) still needs a way out — the reader used
+                    // to hide every control until the chapter finished loading.
+                    loadingBar
+                }
             }
         }
         // A comic reader stays dark no matter the app theme — glass and text here
@@ -57,6 +65,15 @@ struct ReaderView: View {
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(!showBars)
         .task { await reload() }
+        .sheet(isPresented: $showChapterList) {
+            ReaderChapterListView(chapters: model.series,
+                                  currentIndex: model.seriesIndex,
+                                  progress: { store.recentEntry(for: $0.url) },
+                                  onPick: { index in
+                                      showChapterList = false
+                                      Task { await jumpToChapter(index) }
+                                  })
+        }
         .onChange(of: model.index) { newValue in
             guard model.pageCount > 0 else { return }
             saveProgress(page: min(newValue, model.pageCount - 1))
@@ -249,6 +266,25 @@ struct ReaderView: View {
         _ = await model.advanceChapter(direction: 1)
     }
 
+    /// Jumps straight to a chapter picked from the list, keeping its own saved
+    /// page so "jump back to chapter 12" resumes where you stopped.
+    private func jumpToChapter(_ index: Int) async {
+        guard index >= 0, index < model.series.count, index != model.seriesIndex else { return }
+        let target = model.series[index]
+        saveProgress(page: max(0, model.index))
+        chapterJumpArmed = false
+        jumpAllowedAfter = Date().addingTimeInterval(0.8)
+
+        let saved = store.recentPage(for: target.url)
+        guard await model.jump(to: index, startPage: saved) else { return }
+
+        // Reposition the webtoon scroller; `scrollPosition` needs a nil gap to
+        // actually move when the new chapter lands on the same page index.
+        verticalPageID = nil
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        verticalPageID = model.index
+    }
+
     private func goPreviousChapter() async {
         guard !isAdvancing else { return }
         isAdvancing = true
@@ -259,6 +295,38 @@ struct ReaderView: View {
     }
 
     // MARK: - Chrome (Liquid Glass on iOS 26)
+
+    /// Minimal chrome while a chapter is loading or has failed.
+    ///
+    /// The back button has to work at all times — this reader hides the
+    /// navigation bar, so before this existed a slow chapter download left you
+    /// staring at a spinner with no way out.
+    private var loadingBar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                iconButton("chevron.left") { dismiss() }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.currentItem.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Text(model.errorMessage == nil ? "正在加载…" : "加载失败")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.6))
+                }
+
+                Spacer(minLength: 4)
+
+                if model.errorMessage == nil {
+                    ProgressView().tint(.white)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+
+            Spacer()
+        }
+    }
 
     private var bars: some View {
         VStack(spacing: 0) {
@@ -281,7 +349,6 @@ struct ReaderView: View {
     private var topBar: some View {
         HStack(spacing: 6) {
             iconButton("chevron.left") { dismiss() }
-
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.currentItem.displayName)
                     .font(.subheadline.weight(.semibold))
@@ -310,6 +377,8 @@ struct ReaderView: View {
 
             Spacer(minLength: 4)
 
+            iconButton("list.bullet") { showChapterList = true }
+                .accessibilityLabel("章节列表")
             enhanceMenuButton()
             iconButton(verticalMode ? "rectangle.grid.1x2" : "scroll") { toggleVerticalMode() }
         }
