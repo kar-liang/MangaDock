@@ -76,6 +76,8 @@ final class CoverStore {
 
     private var images: [String: UIImage] = [:]
     private var inFlight: Set<String> = []
+    /// 已经在后台排队的系列，避免每次重新进格子都排一次
+    private var backfillQueued: Set<String> = []
 
     func image(for item: WebDAVItem) -> UIImage? {
         images[item.id]
@@ -91,15 +93,61 @@ final class CoverStore {
         inFlight.insert(key)
         defer { inFlight.remove(key) }
 
-        if let cached = CacheManager.coverData(key: key), let image = UIImage(data: cached) {
-            images[key] = image
+        // Bangumi 的正式封面优先于「用第一页生成的封面」。
+        // 自定义封面走的是另一条路径（image(for:) 里已经优先），这里不处理。
+        if !hasCustomCover(for: item),
+           let bangumi = await BangumiClient.shared.coverImage(forSeriesURL: item.url.absoluteString) {
+            images[key] = bangumi
+            if let data = bangumi.jpegData(compressionQuality: 0.82) {
+                CacheManager.storeCover(data, key: key)
+            }
             return
         }
 
-        guard let image = await CoverBuilder.make(for: item, client: client) else { return }
+        if let cached = CacheManager.coverData(key: key), let image = UIImage(data: cached) {
+            images[key] = image
+            // 已经有图了，顺便在后台问问 Bangumi 有没有更好的
+            scheduleBangumiBackfill(for: item)
+            return
+        }
+
+        guard let image = await CoverBuilder.make(for: item, client: client) else {
+            scheduleBangumiBackfill(for: item)
+            return
+        }
         images[key] = image
         if let data = image.jpegData(compressionQuality: 0.82) {
             CacheManager.storeCover(data, key: key)
+        }
+        scheduleBangumiBackfill(for: item)
+    }
+
+    /// 书架上的书第一次出现时可能还没匹配过 Bangumi 条目。
+    /// 这里在后台排队搜一次，命中后直接换上封面并通知格子刷新。
+    private func scheduleBangumiBackfill(for item: WebDAVItem) {
+        guard BangumiClient.shared.isEnabled else { return }
+        guard !hasCustomCover(for: item) else { return }
+        guard BangumiClient.shared.cachedSubject(forSeriesURL: item.url.absoluteString) == nil else {
+            return
+        }
+        let seriesURL = item.url.absoluteString
+        guard !backfillQueued.contains(seriesURL) else { return }
+        backfillQueued.insert(seriesURL)
+
+        Task {
+            let matched = await BangumiClient.shared
+                .enqueueResolve(name: item.displayName, seriesURL: seriesURL).value
+            defer { backfillQueued.remove(seriesURL) }
+            guard matched else { return }
+            guard let cover = await BangumiClient.shared.coverImage(forSeriesURL: seriesURL) else {
+                return
+            }
+            let key = item.id
+            images[key] = cover
+            if let data = cover.jpegData(compressionQuality: 0.82) {
+                CacheManager.storeCover(data, key: key)
+            }
+            NotificationCenter.default.post(name: .coversDidChange, object: nil)
         }
     }
 

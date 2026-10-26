@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 // MARK: - Models
 
@@ -245,6 +246,49 @@ final class BangumiClient {
     /// 手动搜索：返回候选列表，交给用户挑。
     func candidates(for name: String) async -> [BangumiSubject] {
         await searchAll(name: name, limit: 12)
+    }
+
+    // MARK: Cover for the shelf
+
+    private var coverImages: [Int: UIImage] = [:]
+    private var backfillChain: Task<Bool, Never>?
+
+    /// 只查本地：这本是否已经匹配过条目（映射 + 详情缓存），不发请求。
+    func cachedSubject(forSeriesURL url: String) -> BangumiSubject? {
+        guard let id = mapping[url], id > 0 else { return nil }
+        return loadCached(id: id)
+    }
+
+    /// 书架上用的封面。只用已经缓存的数据，不额外发搜索请求 ——
+    /// 搜索走 `enqueueResolve`，在后台慢慢补。
+    func coverImage(forSeriesURL url: String) async -> UIImage? {
+        guard isEnabled, let subject = cachedSubject(forSeriesURL: url) else { return nil }
+        if let cached = coverImages[subject.id] { return cached }
+        guard let cover = subject.coverURL, let data = await get(cover),
+              let image = UIImage(data: data) else {
+            // 图片拉不下来（离线/被墙）不算匹配失败，下次再试
+            return nil
+        }
+        coverImages[subject.id] = image
+        return image
+    }
+
+    /// 后台补匹配：串行排队 + 间隔 600ms，避免一次进书架就打几十个请求。
+    /// 返回 true 表示这次真的从「没匹配」变成了「匹配上了」。
+    @discardableResult
+    func enqueueResolve(name: String, seriesURL: String) -> Task<Bool, Never> {
+        let previous = backfillChain
+        let task = Task<Bool, Never> { [weak self] in
+            _ = await previous?.value
+            guard let self else { return false }
+            // 已经试过（无论成功还是判定没对上）就不再搜
+            if self.mapping[seriesURL] != nil { return false }
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            _ = await self.subject(forSeriesNamed: name, seriesURL: seriesURL)
+            return (self.mapping[seriesURL] ?? -1) > 0
+        }
+        backfillChain = task
+        return task
     }
 
     func detail(id: Int) async -> BangumiSubject? {
