@@ -1,11 +1,10 @@
 import SwiftUI
 
 /// 元数据卡片下面的「角色」横向列表。
-/// 点一个角色会弹出详情（Bangumi 的角色简介比作品简介更有意思）。
+/// 纯展示：不做点击进详情 —— 角色页上的立绘是长竖条，
+/// 放进小方框里无论怎么裁都会显得怪，不如就在这一行看。
 struct BangumiCharactersRow: View {
     let characters: [BangumiCharacter]
-
-    @State private var selected: BangumiCharacter?
 
     /// 横向列表放太多会滑很久，20 个够用。
     private var shown: [BangumiCharacter] {
@@ -16,21 +15,13 @@ struct BangumiCharactersRow: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(shown) { character in
-                    Button {
-                        selected = character
-                    } label: {
-                        card(character)
-                    }
-                    .buttonStyle(.plain)
+                    card(character)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
         .frame(height: 160)
-        .sheet(item: $selected) { character in
-            BangumiCharacterDetail(character: character)
-        }
     }
 
     private func card(_ character: BangumiCharacter) -> some View {
@@ -70,7 +61,6 @@ struct BangumiCharactersRow: View {
             }
         }
         .frame(width: 72)
-        .contentShape(Rectangle())
     }
 
     private var placeholder: some View {
@@ -87,67 +77,5 @@ struct BangumiCharactersRow: View {
         if relation.contains("主角") { return .accentColor }
         if relation.contains("客串") { return .secondary.opacity(0.7) }
         return .secondary
-    }
-}
-
-/// 单个角色的详情。
-struct BangumiCharacterDetail: View {
-    let character: BangumiCharacter
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 12) {
-                        Group {
-                            if let url = character.portraitURL {
-                                AsyncImage(url: url) { phase in
-                                    if case .success(let image) = phase {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        Color.secondary.opacity(0.1)
-                                    }
-                                }
-                            } else {
-                                Color.secondary.opacity(0.1)
-                            }
-                        }
-                        .frame(width: 110, height: 110)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(character.name)
-                                .font(.title3.weight(.semibold))
-                            if let relation = character.relation, !relation.isEmpty {
-                                Text(relation)
-                                    .font(.caption)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 2)
-                                    .background(Color.accentColor.opacity(0.15), in: Capsule())
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
-                        Spacer(minLength: 0)
-                    }
-
-                    if let summary = character.summary,
-                       !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(summary)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(20)
-            }
-            .navigationTitle("角色")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { dismiss() }
-                }
-            }
-        }
     }
 }

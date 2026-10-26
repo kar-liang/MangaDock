@@ -120,8 +120,8 @@ struct BangumiCard: View {
                 placeholder
             }
         }
-        .frame(width: 120, height: 160)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(width: 144, height: 192)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var placeholder: some View {
