@@ -9,6 +9,14 @@ struct ReaderView: View {
     @State private var verticalOverride: Bool? = nil
     /// Guards the "pull past bottom → next chapter" jump against re-firing.
     @State private var chapterJumpArmed = false
+    /// Current scroll phase — a chapter jump is only allowed while the user is
+    /// actually dragging with a finger, never during layout or bounce-back.
+    @State private var scrollPhase: ScrollPhase = .idle
+    /// Stops two chapter advances from overlapping (they'd fight over `index`).
+    @State private var isAdvancing = false
+    /// Chapter jumps stay disabled until the reader has settled after opening —
+    /// the first layout pass is exactly when the bogus overshoot shows up.
+    @State private var jumpAllowedAfter = Date.distantFuture
     /// Tracks the top visible page in webtoon mode — the real reading progress
     /// there, since `model.index` only moves in paged mode.
     @State private var verticalPageID: Int?
@@ -157,27 +165,53 @@ struct ReaderView: View {
             model.index = page
             saveProgress(page: page)
         }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+        .onScrollPhaseChange { _, phase in
+            scrollPhase = phase
+            if phase == .idle { chapterJumpArmed = false }
+        }
+        .onScrollGeometryChange(for: ScrollBottom.self) { geometry in
             // How far past the content bottom the user has dragged (rubber-band
             // overshoot). Negative/zero while inside normal scroll range.
-            geometry.contentOffset.y + geometry.containerSize.height
+            let overshoot = geometry.contentOffset.y + geometry.containerSize.height
                 - geometry.contentInsets.bottom - geometry.contentSize.height
-        } action: { _, overshoot in
-            handleBottomOvershoot(overshoot)
+            // While a LazyVStack is still measuring, contentSize is tiny and the
+            // expression above reports a huge positive number — that used to be
+            // read as "user yanked past the bottom" and silently jumped a
+            // chapter or two right after opening.
+            let laidOut = geometry.contentSize.height >= geometry.containerSize.height
+                && geometry.contentSize.height > 0
+            return ScrollBottom(overshoot: overshoot, isLaidOut: laidOut)
+        } action: { _, bottom in
+            handleBottomOvershoot(bottom)
         }
     }
 
     /// At the bottom, pulling further down (rubber band) by ~30pt jumps to the
     /// next chapter — no need to aim for the "下一话" button.
-    private func handleBottomOvershoot(_ overshoot: CGFloat) {
-        guard model.nextItem != nil else { return }
-        if overshoot > 30 {
+    ///
+    /// Two guards keep it from firing on its own:
+    ///  * `isLaidOut` — ignore layout passes where the content is still being
+    ///    measured (that produced a false "overshoot" of hundreds of points);
+    ///  * `scrollPhase == .interacting` — only a real finger drag counts, not
+    ///    programmatic scroll-position restores or bounce-back animation.
+    private func handleBottomOvershoot(_ bottom: ScrollBottom) {
+        guard model.nextItem != nil, bottom.isLaidOut else { return }
+        guard scrollPhase == .interacting else { return }
+        guard Date() >= jumpAllowedAfter else { return }
+
+        if bottom.overshoot > 30 {
             guard !chapterJumpArmed else { return }
             chapterJumpArmed = true
             Task { await goNextChapter() }
-        } else if overshoot < 5 {
+        } else if bottom.overshoot < 5 {
             chapterJumpArmed = false  // back inside the list: re-arm
         }
+    }
+
+    /// Overshoot plus whether the stack has finished measuring.
+    private struct ScrollBottom: Equatable {
+        var overshoot: CGFloat
+        var isLaidOut: Bool
     }
 
     // MARK: - Tap handling
@@ -207,11 +241,19 @@ struct ReaderView: View {
     }
 
     private func goNextChapter() async {
+        guard !isAdvancing else { return }
+        isAdvancing = true
+        defer { isAdvancing = false }
+        diag("reader", "next chapter from=\(model.currentItem.displayName) index=\(model.index + 1)/\(model.pageCount)")
         saveProgress(page: max(0, model.pageCount - 1))
         _ = await model.advanceChapter(direction: 1)
     }
 
     private func goPreviousChapter() async {
+        guard !isAdvancing else { return }
+        isAdvancing = true
+        defer { isAdvancing = false }
+        diag("reader", "prev chapter from=\(model.currentItem.displayName) index=\(model.index + 1)/\(model.pageCount)")
         saveProgress(page: max(0, model.index))
         _ = await model.advanceChapter(direction: -1)
     }
@@ -396,6 +438,7 @@ struct ReaderView: View {
     // MARK: - Loading
 
     private func reload() async {
+        jumpAllowedAfter = Date().addingTimeInterval(0.8)
         if model.currentItem.url.isFileURL {
             await model.startLocal(startPage: store.recentPage(for: model.currentItem.url))
             return
