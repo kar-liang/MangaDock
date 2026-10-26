@@ -14,6 +14,7 @@ struct SeriesView: View {
 
     // Bangumi 元数据：章节列表上方的卡片
     @State private var bangumi: BangumiSubject?
+    @State private var bangumiCharacters: [BangumiCharacter] = []
     @State private var bangumiLoading = false
     @State private var bangumiTried = false
     @State private var showBangumiPicker = false
@@ -95,6 +96,7 @@ struct SeriesView: View {
                 offlineSection
             } else {
                 bangumiSection
+                charactersSection
                 downloadStatusSection
 
                 if let resume = resumeItem {
@@ -168,6 +170,11 @@ struct SeriesView: View {
                                           subjectID: picked.id)
                 bangumi = picked
                 bangumiTried = true
+                // 换了条目，角色表得跟着换
+                bangumiCharacters = []
+                Task {
+                    bangumiCharacters = await BangumiClient.shared.characters(subjectID: picked.id)
+                }
             }
         }
         .refreshable { await reload() }
@@ -210,6 +217,19 @@ struct SeriesView: View {
         }
     }
 
+    /// 「角色」一栏。数据来自 /subjects/{id}/characters。
+    @ViewBuilder
+    private var charactersSection: some View {
+        if !bangumiCharacters.isEmpty {
+            Section {
+                BangumiCharactersRow(characters: bangumiCharacters)
+                    .listRowInsets(EdgeInsets())
+            } header: {
+                Text("角色（\(bangumiCharacters.count)）")
+            }
+        }
+    }
+
     private func loadBangumi() async {
         guard BangumiClient.shared.isEnabled, !bangumiTried else { return }
         // 这条线路连不上时别干等，直接收起
@@ -224,6 +244,10 @@ struct SeriesView: View {
         )
         bangumiLoading = false
         bangumiTried = true
+
+        if let subject = bangumi {
+            bangumiCharacters = await BangumiClient.shared.characters(subjectID: subject.id)
+        }
     }
 
     // MARK: - Rows

@@ -115,6 +115,24 @@ enum InfoValue: Codable, Hashable {
     }
 }
 
+/// 条目下的一个角色。
+struct BangumiCharacter: Codable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let summary: String?
+    /// 「主角」/「配角」/「客串」，API 直接给中文。
+    let relation: String?
+    let type: Int?
+    let images: BangumiSubject.Images?
+
+    var portraitURL: URL? {
+        for candidate in [images?.medium, images?.large, images?.small, images?.grid] {
+            if let s = candidate, let url = URL(string: s) { return url }
+        }
+        return nil
+    }
+}
+
 // MARK: - Client
 
 /// Bangumi v0 API 客户端。
@@ -241,6 +259,20 @@ final class BangumiClient {
         return subject
     }
 
+    // MARK: Characters
+
+    func characters(subjectID: Int) async -> [BangumiCharacter] {
+        if let cached = loadCachedCharacters(subjectID: subjectID) { return cached }
+
+        guard let url = URL(string: "\(baseURL)/subjects/\(subjectID)/characters") else { return [] }
+        guard let data = await get(url) else { return [] }
+        guard let list = try? JSONDecoder().decode([BangumiCharacter].self, from: data) else {
+            return []
+        }
+        saveCachedCharacters(subjectID: subjectID, data: data)
+        return list
+    }
+
     // MARK: Search
 
     private struct SearchResponse: Codable {
@@ -334,6 +366,19 @@ final class BangumiClient {
     private func saveCached(id: Int, data: Data) {
         guard let url = cacheURL(id: id) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+
+    private func characterCacheURL(id: Int) -> URL {
+        cacheFolder.appendingPathComponent("characters-\(id).json")
+    }
+
+    private func loadCachedCharacters(subjectID: Int) -> [BangumiCharacter]? {
+        guard let data = try? Data(contentsOf: characterCacheURL(id: subjectID)) else { return nil }
+        return try? JSONDecoder().decode([BangumiCharacter].self, from: data)
+    }
+
+    private func saveCachedCharacters(subjectID: Int, data: Data) {
+        try? data.write(to: characterCacheURL(id: subjectID), options: .atomic)
     }
 
     /// 清掉磁盘上的条目缓存（映射保留）。
