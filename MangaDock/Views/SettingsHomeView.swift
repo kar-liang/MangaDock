@@ -57,7 +57,9 @@ struct SettingsHomeView: View {
                     DiagnosticsView()
                 } label: {
                     row(icon: "stethoscope", title: "诊断日志",
-                        detail: diagLog.entries.isEmpty ? "暂无" : "\(diagLog.entries.count) 条")
+                        detail: diagLog.isEnabled
+                            ? (diagLog.entries.isEmpty ? "记录中" : "记录中 · \(diagLog.entries.count) 条")
+                            : "已关闭")
                 }
 
                 NavigationLink {

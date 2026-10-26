@@ -24,6 +24,17 @@ final class DiagLog: ObservableObject {
 
     @Published private(set) var entries: [Entry] = []
 
+    /// 日志默认关闭。一直开着会持续写盘，翻页时尤其明显；
+    /// 需要抓问题时在设置里打开，抓完关掉。
+    @Published var isEnabled: Bool {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            UserDefaults.standard.set(isEnabled, forKey: Self.enabledKey)
+        }
+    }
+
+    static let enabledKey = "mangadock.diagnostics.enabled"
+
     private let maxEntries = 300
     private let stampFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -39,6 +50,7 @@ final class DiagLog: ObservableObject {
     }
 
     private init() {
+        isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         loadTail()
     }
 
@@ -46,6 +58,7 @@ final class DiagLog: ObservableObject {
 
     @MainActor
     func log(_ category: String, _ text: String) {
+        guard isEnabled else { return }
         let entry = Entry(at: Date(), category: category, text: text)
         entries.append(entry)
         if entries.count > maxEntries {
