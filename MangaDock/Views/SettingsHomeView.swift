@@ -113,6 +113,7 @@ struct ReadingSettingsView: View {
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
     @AppStorage("mangadock.enhance") private var enhanceDefault = false
     @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
+    @AppStorage("mangadock.theme") private var themeRaw = AppTheme.system.rawValue
     @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
     @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
     @AppStorage("mangadock.tab.files") private var showFilesTab = true
@@ -165,6 +166,16 @@ struct ReadingSettingsView: View {
                 Picker("外观", selection: $appearanceRaw) {
                     ForEach(AppearanceMode.allCases) { mode in
                         Text(mode.title).tag(mode.rawValue)
+                    }
+                }
+                HStack {
+                    Circle()
+                        .fill(AppTheme(rawValue: themeRaw)?.color ?? .accentColor)
+                        .frame(width: 18, height: 18)
+                    Picker("主题色", selection: $themeRaw) {
+                        ForEach(AppTheme.allCases) { theme in
+                            Text(theme.title).tag(theme.rawValue)
+                        }
                     }
                 }
                 Picker("新目录默认视图", selection: $defaultLayoutRaw) {

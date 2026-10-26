@@ -15,6 +15,7 @@ struct MangaDockApp: App {
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
     @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
+    @AppStorage("mangadock.theme") private var themeRaw = AppTheme.system.rawValue
 
     private var scheme: ColorScheme? {
         switch AppearanceMode(rawValue: appearanceRaw) ?? .system {
@@ -35,6 +36,7 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(scheme)
+        .tint(AppTheme(rawValue: themeRaw)?.tint)
         .task {
             await store.pullSync()
         }
