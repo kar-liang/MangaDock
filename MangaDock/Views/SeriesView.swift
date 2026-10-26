@@ -55,6 +55,13 @@ struct SeriesView: View {
     private func toggleRead(_ chapter: WebDAVItem) {
         let now = isRead(chapter)
         reads.setRead(!now, for: chapter.url)
+        if now {
+            // Marking unread means "I want to start over": drop the saved page
+            // too, otherwise the reader would still resume at the old position.
+            if let entry = store.recentEntry(for: chapter.url) {
+                store.removeRecent(entry)
+            }
+        }
         diag("read", "mark read=\(!now) name=\(chapter.name)")
     }
 

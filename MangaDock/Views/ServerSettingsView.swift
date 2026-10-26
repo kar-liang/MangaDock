@@ -1,12 +1,13 @@
 import SwiftUI
 
+/// WebDAV connection: address, credentials, connection test, network diagnostics.
+///
+/// Also serves as the first-run setup screen (`initialSetup: true`), which is
+/// why the diagnostics block is hidden until the app is actually configured.
 struct ServerSettingsView: View {
     let initialSetup: Bool
 
     @EnvironmentObject private var store: AppStore
-    @ObservedObject private var downloads = DownloadStore.shared
-    @ObservedObject private var diagLog = DiagLog.shared
-    @State private var showDiagnostics = false
 
     @State private var serverURL = ""
     @State private var username = ""
@@ -14,29 +15,10 @@ struct ServerSettingsView: View {
     @State private var isTesting = false
     @State private var message: String?
     @State private var isError = false
-    @State private var cacheSize = ""
     @State private var loaded = false
     @State private var diagResults: [NetDiagnostics.Result] = []
     @State private var diagRunning = false
     @State private var confirmClearServer = false
-    @AppStorage("mangadock.enhance") private var enhanceDefault = false
-    @AppStorage("mangadock.appearance") private var appearanceRaw = AppearanceMode.system.rawValue
-    @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
-    @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
-    @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
-    @AppStorage("mangadock.tab.files") private var showFilesTab = true
-    @AppStorage("mangadock.tab.history") private var showHistoryTab = false
-    @AppStorage("mangadock.syncEnabled") private var syncEnabled = true
-    @State private var syncMessage: String?
-    @State private var syncBusy: SyncAction?
-    @State private var confirmDownload = false
-
-    /// Which direction is currently running, so both buttons can show a
-    /// spinner and stay disabled while the request is in flight.
-    private enum SyncAction: Equatable {
-        case upload
-        case download
-    }
 
     var body: some View {
         Form {
@@ -80,32 +62,6 @@ struct ServerSettingsView: View {
 
             if !initialSetup {
                 Section {
-                    Picker("外观", selection: $appearanceRaw) {
-                        ForEach(AppearanceMode.allCases) { mode in
-                            Text(mode.title).tag(mode.rawValue)
-                        }
-                    }
-                    Picker("新目录默认视图", selection: $defaultLayoutRaw) {
-                        Text("网格").tag(LayoutMode.grid.rawValue)
-                        Text("列表").tag(LayoutMode.list.rawValue)
-                    }
-                } header: {
-                    Text("显示")
-                } footer: {
-                    Text("目录的视图不再放在标题栏按钮里，走这里的设置。已经手动设过视图的目录会保留原来的记忆，新目录跟随「默认视图」。")
-                }
-
-                Section {
-                    Toggle("书架", isOn: $showShelfTab)
-                    Toggle("文件", isOn: $showFilesTab)
-                    Toggle("记录", isOn: $showHistoryTab)
-                } header: {
-                    Text("底栏标签")
-                } footer: {
-                    Text("关掉的标签会从底栏消失，数据不会删。设置页始终显示，免得把自己锁在外面。")
-                }
-
-                Section {
                     Button {
                         Task { await runDiagnostics() }
                     } label: {
@@ -134,191 +90,14 @@ struct ServerSettingsView: View {
                 } footer: {
                     Text("诊断会分别用「当前设置」「忽略证书校验」「HTTP 同端口」连一次服务器，直接告诉你卡在哪一层。")
                 }
-
-                Section {
-                    Picker("默认翻页方式", selection: $defaultReaderMode) {
-                        ForEach(ReaderMode.allCases) { mode in
-                            Text(mode.title).tag(mode.rawValue)
-                        }
-                    }
-                } header: {
-                    Text("阅读")
-                } footer: {
-                    Text("打开漫画时默认用哪种方式：左右翻页，或者像条漫一样上下滚动。阅读器右上角的按钮可以临时切换，不改这里的默认值。")
-                }
-
-                Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("当前引擎").font(.subheadline)
-                        Text(ImageEnhancer.engineDescription)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                    Toggle("默认开启画质增强", isOn: $enhanceDefault)
-
-                    if ImageEnhancer.hasAIModel {
-                        Picker("AI 超分倍数", selection: Binding(
-                            get: { ImageEnhancer.aiScale.rawValue },
-                            set: { ImageEnhancer.aiScale = AIEnhancer.Scale(rawValue: $0) ?? .two }
-                        )) {
-                            ForEach(AIEnhancer.Scale.allCases, id: \.rawValue) { scale in
-                                Text(scale.title).tag(scale.rawValue)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("图像增强")
-                } footer: {
-                    Text(ImageEnhancer.hasAIModel
-                         ? "已内置 Real-ESRGAN 动漫超分模型。开启增强后：先跑 GPU 快速增强，再叠加 AI 超分重建细节，一页约需数秒。4 倍细节更丰富但更慢、更占内存。"
-                         : "增强在本地 GPU 上跑：2 倍 Lanczos 上采样 + 锐化，对低分辨率扫描件效果明显。未内置 AI 模型。")
-                }
-
-                Section {
-                    HStack {
-                        Text("缓存占用")
-                        Spacer()
-                        Text(cacheSize).foregroundColor(.secondary)
-                    }
-                    Button("清除漫画缓存", role: .destructive) {
-                        CacheManager.clear()
-                        CoverStore.shared.clearMemory()
-                        refreshCacheSize()
-                    }
-                    Button("清空阅读记录", role: .destructive) {
-                        store.clearRecent()
-                    }
-                } header: {
-                    Text("本地数据")
-                } footer: {
-                    Text("缓存的是下载过的 CBZ、看过的散图和自动生成的封面，清掉不影响服务器上的文件。你自己设置的自定义封面不算缓存，不会被清掉。")
-                }
-
-                Section {
-                    HStack {
-                        Text("已下载章节")
-                        Spacer()
-                        Text(downloads.records.isEmpty
-                             ? "无"
-                             : "\(downloads.records.count) 章 · \(downloads.formattedSize)")
-                            .foregroundColor(.secondary)
-                    }
-                    if downloads.isBusy {
-                        Button("取消正在进行的下载", role: .destructive) {
-                            downloads.cancelAll()
-                        }
-                    }
-                    Button("删除所有下载", role: .destructive) {
-                        downloads.removeAll()
-                    }
-                    .disabled(downloads.records.isEmpty)
-                } header: {
-                    Text("离线下载")
-                } footer: {
-                    Text("在章节列表右上角可以下载整本，左滑单个章节可以只下一章。下载的内容固定在手机上，没网也能看，不占 iCloud 备份空间。")
-                }
-
-                Section {
-                    Button {
-                        showDiagnostics = true
-                    } label: {
-                        HStack {
-                            Text("诊断日志")
-                            Spacer()
-                            Text(diagLog.entries.isEmpty ? "暂无" : "\(diagLog.entries.count) 条")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("排错")
-                } footer: {
-                    Text("遇到打开错章节、白屏、加载失败这类问题，先打开这里点「复制」，把整段日志发出来。日志只存在本机，不上传。")
-                }
-
-                Section {
-                    Toggle("启用多设备同步", isOn: $syncEnabled)
-
-                    HStack {
-                        Text("上次同步")
-                        Spacer()
-                        Text(SyncService.lastSyncDate.map { $0.formatted(date: .omitted, time: .shortened) } ?? "从未")
-                            .foregroundColor(.secondary)
-                    }
-
-                    Button {
-                        Task { await runSync(.upload) }
-                    } label: {
-                        HStack {
-                            Label("上传同步", systemImage: "arrow.up.to.line")
-                            Spacer()
-                            if syncBusy == .upload { ProgressView() }
-                        }
-                    }
-                    .disabled(syncBusy != nil)
-
-                    Button {
-                        confirmDownload = true
-                    } label: {
-                        HStack {
-                            Label("下载同步", systemImage: "arrow.down.to.line")
-                            Spacer()
-                            if syncBusy == .download { ProgressView() }
-                        }
-                    }
-                    .disabled(syncBusy != nil)
-                    .confirmationDialog("用云端数据覆盖这台设备？",
-                                        isPresented: $confirmDownload,
-                                        titleVisibility: .visible) {
-                        Button("下载并覆盖本机", role: .destructive) {
-                            Task { await runSync(.download) }
-                        }
-                        Button("取消", role: .cancel) {}
-                    } message: {
-                        Text("本机的书架、阅读进度和阅读设置会被服务器上的版本替换。")
-                    }
-
-                    if let syncMessage {
-                        Text(syncMessage)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                } header: {
-                    Text("多设备同步")
-                } footer: {
-                    Text("进度、书架、设置存到服务器上的隐藏文件（.mangadock-sync.json），你自己设置的封面单独存在 .mangadock-covers 目录。开关打开时多台设备自动同步，最后写入的为准；「上传同步」用本机覆盖云端，「下载同步」用云端覆盖本机，两个方向都由你手动决定。密码不会同步，每台设备自己填。")
-                }
-
-                Section {
-                    NavigationLink(value: NavTarget.privateShelf) {
-                        HStack {
-                            Label("隐私空间", systemImage: "lock")
-                            Spacer()
-                            Text("\(PrivacyStore.shared.count)")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("隐私")
-                } footer: {
-                    Text("长按书架上的漫画选「隐藏进隐私空间」，进来需要 FaceID 或设备密码。")
-                }
-
-                Section("关于") {
-                    LabeledContent("版本", value: Self.appVersion)
-                    LabeledContent("支持格式", value: "CBZ / ZIP / PDF / 图片文件夹")
-                    Text("不支持 CBR（RAR），CBR 可以先转成 CBZ。PDF 会整本下载后逐页渲染。")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
             }
         }
-        .navigationTitle(initialSetup ? "连接 WebDAV" : "设置")
+        .navigationTitle(initialSetup ? "连接 WebDAV" : "WebDAV 服务器")
         .navigationBarTitleDisplayMode(initialSetup ? .large : .inline)
-        .libraryNavigation()
+        // No .libraryNavigation() here: this screen is pushed from
+        // SettingsHomeView, and registering the same destinations twice breaks
+        // pushes (see the 1.7.1 fix).
         .onAppear(perform: loadExisting)
-        .sheet(isPresented: $showDiagnostics) {
-            DiagnosticsView()
-        }
         .confirmationDialog("清除 WebDAV 配置？", isPresented: $confirmClearServer, titleVisibility: .visible) {
             Button("清除", role: .destructive) {
                 store.clearConfiguration()
@@ -339,23 +118,6 @@ struct ServerSettingsView: View {
         serverURL = store.serverURL
         username = store.username
         password = store.password
-        refreshCacheSize()
-    }
-
-    private func refreshCacheSize() {
-        cacheSize = CacheManager.formattedSize()
-    }
-
-    private func runSync(_ action: SyncAction) async {
-        syncBusy = action
-        syncMessage = nil
-        switch action {
-        case .upload:
-            syncMessage = await store.uploadSync()
-        case .download:
-            syncMessage = await store.downloadSync()
-        }
-        syncBusy = nil
     }
 
     private func runDiagnostics() async {
@@ -363,14 +125,6 @@ struct ServerSettingsView: View {
         diagResults = []
         diagResults = await NetDiagnostics.run(store.serverURL)
         diagRunning = false
-    }
-
-    /// Read straight from the bundle so the label can never desync from the build.
-    private static var appVersion: String {
-        let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "-"
-        let build = info?["CFBundleVersion"] as? String ?? "-"
-        return "\(version) (\(build))"
     }
 
     private func testAndSave() async {

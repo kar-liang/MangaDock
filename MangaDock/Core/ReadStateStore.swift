@@ -43,6 +43,25 @@ final class ReadStateStore: ObservableObject {
         save()
     }
 
+    /// Called on every page turn: reaching the last page clears a stale
+    /// "marked unread" flag, otherwise the chapter would stay unread forever
+    /// no matter how many times you finish it.
+    @MainActor
+    func noteFinished(_ url: URL, page: Int, pageCount: Int) {
+        guard pageCount > 0, page >= pageCount - 1 else { return }
+        guard marks[url.absoluteString] == false else { return }
+        marks.removeValue(forKey: url.absoluteString)
+        save()
+    }
+
+    /// Wipes every override, returning all chapters to the automatic rule.
+    @MainActor
+    func clearAll() {
+        guard !marks.isEmpty else { return }
+        marks.removeAll()
+        save()
+    }
+
     /// Drops the override so the progress decides again.
     @MainActor
     func clearOverride(for url: URL) {

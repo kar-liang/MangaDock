@@ -45,7 +45,7 @@ struct RootTabView: View {
             }
             Tab("设置", systemImage: "gearshape.fill", value: RootTab.settings) {
                 NavigationStack {
-                    ServerSettingsView(initialSetup: false)
+                    SettingsHomeView()
                 }
             }
         }

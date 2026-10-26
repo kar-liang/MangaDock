@@ -166,6 +166,8 @@ final class AppStore: ObservableObject {
         if let data = try? JSONEncoder().encode(list) {
             defaults.set(data, forKey: Keys.recent)
         }
+        // Finishing a chapter must also clear a manual "unread" mark.
+        ReadStateStore.shared.noteFinished(url, page: page, pageCount: pageCount)
         scheduleSyncPush()
     }
 
@@ -174,6 +176,7 @@ final class AppStore: ObservableObject {
         if let data = try? JSONEncoder().encode(recent) {
             defaults.set(data, forKey: Keys.recent)
         }
+        scheduleSyncPush()
     }
 
     /// Replaces the whole recent list (used by multi-device sync).
