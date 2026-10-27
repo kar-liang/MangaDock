@@ -6,6 +6,8 @@ import SwiftUI
 struct ComicPageView: View {
     @ObservedObject var model: ReaderModel
     let index: Int
+    /// 缩放状态变化（放大 = true），冒泡给 ReaderView 决定是否禁用左右翻页。
+    var onZoomChanged: ((Bool) -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
@@ -36,7 +38,7 @@ struct ComicPageView: View {
     @ViewBuilder
     private var pageContent: some View {
         if let image {
-            ZoomableImageView(image: image, onTap: nil)
+            ZoomableImageView(image: image, onTap: nil, onZoomChanged: onZoomChanged)
         } else if failed {
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")

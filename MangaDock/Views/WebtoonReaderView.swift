@@ -70,6 +70,10 @@ struct WebtoonReaderView: UIViewRepresentable {
         if context.coordinator.chapterKey != model.currentItem.url.absoluteString
             || context.coordinator.pageCount != model.pageCount {
             context.coordinator.buildPages(in: scroll)
+        } else if context.coordinator.layoutWidth != pageWidth, pageWidth > 0 {
+            // pageWidth 首次量出来（初始为 0）或屏宽变化时重排，否则首屏黑边。
+            context.coordinator.layoutWidth = pageWidth
+            context.coordinator.relayout()
         }
     }
 
@@ -88,6 +92,8 @@ struct WebtoonReaderView: UIViewRepresentable {
         private var pageViews: [UIImageView] = []
         /// 每页布局时用的宽高比缓存（用于检测 aspect 变化后重排）。
         private var layoutAspects: [CGFloat] = []
+        /// 上次布局用的宽度，检测 pageWidth 变化后重排（初始 pageWidth 可能为 0）。
+        private var layoutWidth: CGFloat = 0
         /// 已加载（持有 image）的页集合，用于按需卸载。
         private var loadedPages: Set<Int> = []
         /// 正在加载的页任务，避免重复加载。
@@ -118,7 +124,9 @@ struct WebtoonReaderView: UIViewRepresentable {
             let count = pageCount
             for i in 0..<count {
                 let iv = UIImageView()
-                iv.contentMode = .scaleAspectFit
+                // frame 高度按图片真实宽高比精确算，scaleToFill 正好 1:1 铺满，
+                // 不会像 scaleAspectFit 那样在边缘留黑边。
+                iv.contentMode = .scaleToFill
                 iv.clipsToBounds = true
                 iv.backgroundColor = .black
                 contentView.addSubview(iv)
@@ -138,6 +146,7 @@ struct WebtoonReaderView: UIViewRepresentable {
             guard let contentView, let scrollView else { return }
             let width = parent.pageWidth
             guard width > 0 else { return }
+            layoutWidth = width
 
             var y: CGFloat = 0
             for i in 0..<pageViews.count {
@@ -210,8 +219,9 @@ struct WebtoonReaderView: UIViewRepresentable {
                 self.pageViews[index].image = image
                 self.loadedPages.insert(index)
 
-                // aspect 可能刚更新（图片加载后才拿到真实尺寸），变化则重排。
-                let newAspect = self.parent.model.aspect(for: index)
+                // 用图片真实尺寸算精确宽高比（不依赖 model 的 pageAspects，
+                // 它可能因 decode 时序滞后导致估算高度留黑边），变化则重排。
+                let newAspect = image.size.width / max(image.size.height, 1)
                 if abs(newAspect - self.layoutAspects[index]) > 0.001 {
                     self.layoutAspects[index] = newAspect
                     self.relayout()
@@ -236,7 +246,19 @@ struct WebtoonReaderView: UIViewRepresentable {
             // 双击在 1x 与 2x 之间切换（整章一起缩放，跟单张图一样）。
             guard let scrollView else { return }
             let target: CGFloat = scrollView.zoomScale > 1.05 ? 1 : 2
-            scrollView.setZoomScale(target, animated: true)
+            if target > 1.05 {
+                // 放大：以点击位置为锚点（双击哪里放大哪里），跟相册一致。
+                let point = recognizer.location(in: scrollView)
+                let contentPoint = scrollView.convert(point, to: contentView)
+                let w = scrollView.bounds.width / target
+                let h = scrollView.bounds.height / target
+                let rect = CGRect(x: contentPoint.x - w / 2,
+                                  y: contentPoint.y - h / 2,
+                                  width: w, height: h)
+                scrollView.zoom(to: rect, animated: true)
+            } else {
+                scrollView.setZoomScale(target, animated: true)
+            }
         }
 
         // MARK: - UIScrollViewDelegate

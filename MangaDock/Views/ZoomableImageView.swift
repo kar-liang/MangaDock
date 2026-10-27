@@ -18,9 +18,11 @@ struct ZoomableImageView: UIViewRepresentable {
     var onTap: (() -> Void)?
     /// 双击 —— 默认在「fit」与「2.5×fit」之间切换
     var onDoubleTap: ((CGFloat) -> Void)?
+    /// 缩放状态变化（放大 = true），供外层 ReaderView 决定是否禁用左右翻页。
+    var onZoomChanged: ((Bool) -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap, onDoubleTap: onDoubleTap)
+        Coordinator(onTap: onTap, onDoubleTap: onDoubleTap, onZoomChanged: onZoomChanged)
     }
 
     func makeUIView(context: Context) -> UIScrollView {
@@ -79,12 +81,15 @@ struct ZoomableImageView: UIViewRepresentable {
         weak var scrollView: UIScrollView?
         var onTap: (() -> Void)?
         var onDoubleTap: ((CGFloat) -> Void)?
+        var onZoomChanged: ((Bool) -> Void)?
 
         private var pendingSingleTap: Task<Void, Never>?
 
-        init(onTap: (() -> Void)?, onDoubleTap: ((CGFloat) -> Void)?) {
+        init(onTap: (() -> Void)?, onDoubleTap: ((CGFloat) -> Void)?,
+             onZoomChanged: ((Bool) -> Void)?) {
             self.onTap = onTap
             self.onDoubleTap = onDoubleTap
+            self.onZoomChanged = onZoomChanged
         }
 
         // MARK: Tap
@@ -101,12 +106,26 @@ struct ZoomableImageView: UIViewRepresentable {
         @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
             pendingSingleTap?.cancel()
             pendingSingleTap = nil
-            let scroll = scrollView
-            let current = scroll?.zoomScale ?? 1
+            guard let scroll = scrollView else { return }
+            let minScale = scroll.minimumZoomScale
+            let current = scroll.zoomScale
             // 双击在「fit（正常）」与「2.5×fit」之间切换
-            let minScale = scroll?.minimumZoomScale ?? 1
             let target: CGFloat = current > minScale * 1.05 ? minScale : minScale * 2.5
-            scroll?.setZoomScale(target, animated: true)
+
+            if target > minScale * 1.05 {
+                // 放大：以点击位置为锚点（双击哪里放大哪里），跟相册一样。
+                let point = recognizer.location(in: scroll)
+                // 点击点在 contentView 坐标系里的位置
+                let contentPoint = scroll.convert(point, to: scroll.subviews.first)
+                let w = scroll.bounds.width / target
+                let h = scroll.bounds.height / target
+                let rect = CGRect(x: contentPoint.x - w / 2,
+                                  y: contentPoint.y - h / 2,
+                                  width: w, height: h)
+                scroll.zoom(to: rect, animated: true)
+            } else {
+                scroll.setZoomScale(target, animated: true)
+            }
             onDoubleTap?(target)
         }
 
@@ -188,6 +207,7 @@ struct ZoomableImageView: UIViewRepresentable {
             // 放大后启用 pan（拖动看局部），fit 时禁用（让位外层翻页）。
             let zoomed = scrollView.zoomScale > scrollView.minimumZoomScale * 1.01
             scrollView.panGestureRecognizer.isEnabled = zoomed
+            onZoomChanged?(zoomed)
         }
 
         /// fit 时 UIScrollView 不开始拖动，把横向手势让给外层翻页。

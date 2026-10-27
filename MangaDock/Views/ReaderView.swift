@@ -18,6 +18,8 @@ struct ReaderView: View {
     @State private var jumpAllowedAfter = Date.distantFuture
     /// 条漫模式可用宽度，量一次传给每页算原始高度。
     @State private var pageWidth: CGFloat = 0
+    /// 分页模式当前页是否处于放大状态（放大时左右点击不翻页）。
+    @State private var isPageZoomed = false
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -72,6 +74,8 @@ struct ReaderView: View {
         }
         .onChange(of: model.index) { newValue in
             guard model.pageCount > 0 else { return }
+            // 翻页后新页是 fit 状态，重置放大标志（避免残留导致新页左右点击失效）。
+            isPageZoomed = false
             saveProgress(page: min(newValue, model.pageCount - 1))
             model.prewarm(from: newValue + 1)
             model.preloadNextChapterIfNeeded()
@@ -99,7 +103,11 @@ struct ReaderView: View {
                       index: $model.index,
                       onTapLeft: handleTapLeft,
                       onTapCenter: toggleBars,
-                      onTapRight: handleTapRight)
+                      onTapRight: handleTapRight,
+                      onZoomChanged: { zoomed in
+                          isPageZoomed = zoomed
+                      },
+                      isPageZoomed: isPageZoomed)
                 .ignoresSafeArea()
         }
     }
