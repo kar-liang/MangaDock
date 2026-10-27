@@ -11,27 +11,13 @@ struct ReaderView: View {
     @State private var showChapterList = false
     /// Guards the "pull past bottom → next chapter" jump against re-firing.
     @State private var chapterJumpArmed = false
-    /// Current scroll phase — a chapter jump is only allowed while the user is
-    /// actually dragging with a finger, never during layout or bounce-back.
-    @State private var scrollPhase: ScrollPhase = .idle
     /// Stops two chapter advances from overlapping (they'd fight over `index`).
     @State private var isAdvancing = false
     /// Chapter jumps stay disabled until the reader has settled after opening —
     /// the first layout pass is exactly when the bogus overshoot shows up.
     @State private var jumpAllowedAfter = Date.distantFuture
-    /// Tracks the top visible page in webtoon mode — the real reading progress
-    /// there, since `model.index` only moves in paged mode.
-    @State private var verticalPageID: Int?
     /// 条漫模式可用宽度，量一次传给每页算原始高度。
     @State private var pageWidth: CGFloat = 0
-    /// 条漫模式「整章缩放」倍数（1 = 原尺寸）。所有页一起变大，捏合/双击调整。
-    @State private var webtoonZoomRatio: CGFloat = 1
-    /// 捏合手势开始时的缩放倍数，用于累计（MagnifyGesture 的 magnification 每次从 1 起）。
-    @State private var pinchStartRatio: CGFloat = 1
-    /// 捏合时手指中心在视口中的垂直比例（0~1），缩放时用它锚定滚动，稳住画面。
-    @State private var pinchAnchorFraction: CGFloat = 0.5
-    /// 是否正在捏合。捏合时用手指锚点稳住画面，结束后恢复顶部锚点（进度跟踪）。
-    @State private var isPinching = false
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -163,122 +149,33 @@ struct ReaderView: View {
     }
 
     private var verticalReader: some View {
-        ScrollView {
-            LazyVStack(spacing: 6) {
-                ForEach(0..<model.pageCount, id: \.self) { position in
-                    ComicPageView(model: model, index: position,
-                                  onTap: toggleBars,
-                                  onDoubleTap: toggleWebtoonZoom,
-                                  stableHeight: true,
-                                  pageWidth: pageWidth,
-                                  zoomRatio: webtoonZoomRatio)
-                        .id(position)
-                        .frame(maxWidth: .infinity)
+        WebtoonReaderView(model: model,
+                          pageWidth: pageWidth,
+                          onTap: toggleBars,
+                          onPageChange: { page in
+                              guard page != model.index else { return }
+                              model.index = page
+                              saveProgress(page: page)
+                          },
+                          onNextChapter: {
+                              // 底部 overshoot 换章，带防抖避免重复触发。
+                              guard model.nextItem != nil, !chapterJumpArmed else { return }
+                              chapterJumpArmed = true
+                              Task { await goNextChapter() }
+                          })
+            .background(Color.black)
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { pageWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, w in pageWidth = w }
                 }
-                if model.nextItem != nil {
-                    ChapterEndView(model: model)
-                        .frame(minHeight: 300)
-                }
+            )
+            .id(model.currentItem.url)
+            .onAppear {
+                diag("webtoon", "appear chapter=\(model.currentItem.displayName) index=\(model.index) pages=\(model.pageCount)")
+                chapterJumpArmed = false
             }
-            .padding(.vertical, 6)
-            .scrollTargetLayout()
-        }
-        .background(Color.black)
-        // 整章缩放：双指捏合调整全局倍数（不影响单指滚动翻页），并记录手指
-        // 锚点位置，缩放时用它稳住画面，避免「滚走」。
-        .simultaneousGesture(
-            MagnifyGesture()
-                .onChanged { value in
-                    isPinching = true
-                    // 手指捏合中心在视口中的比例（startAnchor 直接给出，无需手算）。
-                    pinchAnchorFraction = min(max(value.startAnchor.y, 0), 1)
-                    let next = min(max(pinchStartRatio * value.magnification, 1), 4)
-                    webtoonZoomRatio = next
-                }
-                .onEnded { _ in
-                    pinchStartRatio = webtoonZoomRatio
-                    isPinching = false
-                }
-        )
-        // 量一次可用宽度，够算每页原始高度（不做嵌套测量）。
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { pageWidth = geo.size.width }
-                    .onChange(of: geo.size.width) { _, w in pageWidth = w }
-            }
-        )
-        // 换章时整块重建。ForEach 的 id 是 0..<pageCount，新旧章节的 id 完全
-        // 重合，scrollPosition 认不出换了一章，会把旧页号套到新内容上 ——
-        // 表现就是「进下一章还停在中后段」。换 identity 是最干脆的归零方式。
-        .id(model.currentItem.url)
-        // 捏合时用手指锚点稳住画面（缩放不滚走），平时用顶部锚点跟踪阅读进度。
-        .scrollPosition(id: $verticalPageID,
-                        anchor: isPinching
-                            ? UnitPoint(x: 0.5, y: pinchAnchorFraction)
-                            : .top)
-        .onAppear {
-            diag("webtoon", "appear chapter=\(model.currentItem.displayName) index=\(model.index) pages=\(model.pageCount) vpid=\(verticalPageID.map(String.init) ?? "nil")")
-            // Jump to the saved page; id-based positioning needs the ID set once.
-            if verticalPageID == nil {
-                verticalPageID = model.index
-            }
-        }
-        .onChange(of: model.currentItem.url) { _, _ in
-            diag("webtoon", "chapter changed -> \(model.currentItem.displayName) index=\(model.index) pages=\(model.pageCount) vpid=\(verticalPageID.map(String.init) ?? "nil")")
-        }
-        .onChange(of: verticalPageID) { _, newID in
-            guard let page = newID, page != model.index else { return }
-            model.index = page
-            saveProgress(page: page)
-        }
-        .onScrollPhaseChange { _, phase in
-            scrollPhase = phase
-            if phase == .idle { chapterJumpArmed = false }
-        }
-        .onScrollGeometryChange(for: ScrollBottom.self) { geometry in
-            // How far past the content bottom the user has dragged (rubber-band
-            // overshoot). Negative/zero while inside normal scroll range.
-            let overshoot = geometry.contentOffset.y + geometry.containerSize.height
-                - geometry.contentInsets.bottom - geometry.contentSize.height
-            // While a LazyVStack is still measuring, contentSize is tiny and the
-            // expression above reports a huge positive number — that used to be
-            // read as "user yanked past the bottom" and silently jumped a
-            // chapter or two right after opening.
-            let laidOut = geometry.contentSize.height >= geometry.containerSize.height
-                && geometry.contentSize.height > 0
-            return ScrollBottom(overshoot: overshoot, isLaidOut: laidOut)
-        } action: { _, bottom in
-            handleBottomOvershoot(bottom)
-        }
-    }
-
-    /// At the bottom, pulling further down (rubber band) by ~30pt jumps to the
-    /// next chapter — no need to aim for the "下一话" button.
-    ///
-    /// Two guards keep it from firing on its own:
-    ///  * `isLaidOut` — ignore layout passes where the content is still being
-    ///    measured (that produced a false "overshoot" of hundreds of points);
-    ///  * `scrollPhase == .interacting` — only a real finger drag counts, not
-    ///    programmatic scroll-position restores or bounce-back animation.
-    private func handleBottomOvershoot(_ bottom: ScrollBottom) {
-        guard model.nextItem != nil, bottom.isLaidOut else { return }
-        guard scrollPhase == .interacting else { return }
-        guard Date() >= jumpAllowedAfter else { return }
-
-        if bottom.overshoot > 30 {
-            guard !chapterJumpArmed else { return }
-            chapterJumpArmed = true
-            Task { await goNextChapter() }
-        } else if bottom.overshoot < 5 {
-            chapterJumpArmed = false  // back inside the list: re-arm
-        }
-    }
-
-    /// Overshoot plus whether the stack has finished measuring.
-    private struct ScrollBottom: Equatable {
-        var overshoot: CGFloat
-        var isLaidOut: Bool
     }
 
     // MARK: - Tap handling
@@ -297,14 +194,6 @@ struct ReaderView: View {
         withAnimation(.easeInOut(duration: 0.15)) { showBars.toggle() }
     }
 
-    /// 双击切换整章缩放：1× ↔ 2×。
-    private func toggleWebtoonZoom() {
-        withAnimation(.easeInOut(duration: 0.18)) {
-            webtoonZoomRatio = webtoonZoomRatio > 1.05 ? 1 : 2
-        }
-        pinchStartRatio = webtoonZoomRatio
-    }
-
     private func revealBars() {
         withAnimation(.easeInOut(duration: 0.15)) { showBars = true }
     }
@@ -321,9 +210,6 @@ struct ReaderView: View {
         defer { isAdvancing = false }
         diag("reader", "next chapter from=\(model.currentItem.displayName) index=\(model.index + 1)/\(model.pageCount)")
         saveProgress(page: max(0, model.pageCount - 1))
-        // 必须在换章**之前**松开：advanceChapter 会改动 currentItem，
-        // ScrollView 的 .id 立刻变化触发重建，而重建时的 onAppear 只在
-        // verticalPageID == nil 时才写新值。放后面就来不及了。
         resetVerticalScroll()
         _ = await model.advanceChapter(direction: 1)
     }
@@ -342,16 +228,10 @@ struct ReaderView: View {
         guard await model.jump(to: index, startPage: saved) else { return }
     }
 
-    /// 换章**前**松开滚动绑定。
-    ///
-    /// 真正的归零有两个条件：ScrollView 挂 `.id(item.url)`（换章即重建）+
-    /// 重建那一刻 `verticalPageID == nil`（onAppear 才会写 model.index）。
-    /// 只要在 advanceChapter 之前置 nil，重建时就一定会归零。
-    /// 反过来（换完再置 nil）没用 —— 重建已经用旧页号定位过了。
+    /// 换章前复位换章防抖标志。UIKit 方案里换章由 `.id(item.url)` 触发
+    /// WebtoonReaderView 重建，滚动/缩放自动归零，无需手动处理。
     private func resetVerticalScroll() {
-        verticalPageID = nil
-        webtoonZoomRatio = 1
-        pinchStartRatio = 1
+        chapterJumpArmed = false
     }
 
     private func goPreviousChapter() async {
