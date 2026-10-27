@@ -108,8 +108,8 @@ final class AppStore: ObservableObject {
         let username = self.username
         let password = self.password
         for url in urls {
-            // 短超时探测，连不上的地址快速跳过，不干等 30 秒。
-            let client = WebDAVClient(username: username, password: password, baseURL: url, timeout: 3)
+            // 探测超时：连不上的地址跳过，但别太快（3 秒会让启动加载圈一闪就没了）。
+            let client = WebDAVClient(username: username, password: password, baseURL: url, timeout: 10)
             if (try? await client.ping()) != nil {
                 activeURL = url
                 return url
