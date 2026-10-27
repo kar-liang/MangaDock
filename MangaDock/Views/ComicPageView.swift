@@ -9,21 +9,52 @@ struct ComicPageView: View {
     /// Vertical mode needs a height that doesn't change after the image arrives,
     /// otherwise reflow above the viewport yanks the scroll offset around.
     var stableHeight: Bool = false
-    /// 条漫模式：双指捏合这一页时回调，由阅读器浮出可自由缩放的图层。
-    /// 原地放大，不跳到别的页面去。
-    var onZoomRequest: ((UIImage) -> Void)? = nil
+    /// 条漫模式可用宽度。用来算这一页的原始高度（宽度 ÷ 高宽比），
+    /// 有了原始高度才能在放大时把占位一起撑开。
+    var pageWidth: CGFloat = 0
+    /// 放大状态变化时回调（true = 正在放大，ReaderView 据此禁用整页滚动）
+    var onZoomActiveChange: ((Bool) -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
     @State private var loadedGeneration = 0
 
+    // 条漫模式的原地缩放
+    @State private var scale: CGFloat = 1
+    @State private var zoomOffset: CGSize = .zero
+    @State private var dragAnchor: CGSize = .zero
+
+    /// 放大后的容器高度。宽度还没测到时返回 nil，交给 aspectRatio 兜底。
+    private var zoomedHeight: CGFloat? {
+        guard baseHeight > 0 else { return nil }
+        return baseHeight * scale
+    }
+
+    /// 这一页的原始高度（未放大时）
+    private var baseHeight: CGFloat {
+        let ratio = model.aspect(for: index)
+        guard ratio > 0, pageWidth > 0 else { return 0 }
+        return pageWidth / ratio
+    }
+
     var body: some View {
         Group {
             if stableHeight {
+                // 高度自己算：放大时占位一起撑开，后面的内容被推下去。
+                // 用 pageWidth ÷ 高宽比 得到原始高度，不做嵌套测量 ——
+                // 测量会跟 frame 形成循环。
                 Color.clear
                     .aspectRatio(model.aspect(for: index), contentMode: .fit)
-                    .overlay { pageContent }
-                    .clipped()
+                    .frame(height: zoomedHeight)
+                    .overlay(alignment: .top) {
+                        pageContent
+                            .scaleEffect(scale, anchor: .top)
+                            .offset(zoomOffset)
+                    }
+                    // 放大后不能裁 —— 否则放大的部分会被切掉
+                    .clipped(scale <= 1.01)
+                    // 放大的那一页要盖在相邻页上面
+                    .zIndex(scale > 1.01 ? 1 : 0)
             } else {
                 ZStack {
                     Color.black
@@ -38,14 +69,29 @@ struct ComicPageView: View {
             if stableHeight || image == nil { onTap?() }
         }
         .simultaneousGesture(
-            // 条漫模式：双指捏合就地放大这一页。MagnifyGesture 是双指，
+            // 条漫模式：双指捏合就地缩放这一页。MagnifyGesture 是双指，
             // 和 ScrollView 的单指滚动不打架。
             MagnifyGesture()
                 .onChanged { value in
-                    guard stableHeight, let image else { return }
-                    if value.magnification > 1.06 {
-                        onZoomRequest?(image)
-                    }
+                    guard stableHeight else { return }
+                    let next = min(max(value.magnification, 1), 4)
+                    scale = next
+                    onZoomActiveChange?(next > 1.01)
+                    if next <= 1.01 { resetZoom() }
+                }
+        )
+        .simultaneousGesture(
+            // 放大后单指拖动 = 平移查看局部
+            DragGesture()
+                .onChanged { value in
+                    guard stableHeight, scale > 1.01 else { return }
+                    zoomOffset = clampedOffset(
+                        CGSize(width: dragAnchor.width + value.translation.width,
+                               height: dragAnchor.height + value.translation.height),
+                        scale: scale)
+                }
+                .onEnded { _ in
+                    dragAnchor = zoomOffset
                 }
         )
         .task(id: "\(index)-\(model.enhanceGeneration)") {
@@ -94,6 +140,23 @@ struct ComicPageView: View {
                 .progressViewStyle(.circular)
                 .tint(.white)
         }
+    }
+
+    /// 拖动范围：不能把图拖得完全离开原来的位置，否则会「丢失」它。
+    private func clampedOffset(_ offset: CGSize, scale: CGFloat) -> CGSize {
+        let maxX = baseHeight * (scale - 1) / 2
+        let maxY = baseHeight * (scale - 1) / 2
+        return CGSize(width: min(max(offset.width, -maxX), maxX),
+                      height: min(max(offset.height, -maxY), maxY))
+    }
+
+    private func resetZoom() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            scale = 1
+            zoomOffset = .zero
+            dragAnchor = .zero
+        }
+        onZoomActiveChange?(false)
     }
 
     private func load() async {
