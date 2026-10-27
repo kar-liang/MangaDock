@@ -186,4 +186,5 @@ ZIP 解析是自己写的（`Core/ZipArchive.swift`），只依赖系统 `Compre
 | 2.0.6 | 重新实现图片缩放：分页/条漫两种模式原生捏合+双击+拖动，固定窗口内缩放不弹层 |
 | 2.0.7 | 修缩放导致的闪退：不再覆盖 UIScrollView pan 手势的 delegate（改禁用 pan） |
 | 2.0.8 | 修缩放初始即放大、缩不回正常：改用相册同款 fit 缩放范式（frame=原图尺寸，zoomScale 从 fit 起算） |
+| 2.0.9 | 修翻页模式缩放后不居中：居中改用 PhotoScroller 同款 frame 定位，不用 contentInset |
 

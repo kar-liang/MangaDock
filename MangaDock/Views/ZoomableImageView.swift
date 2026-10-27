@@ -52,7 +52,8 @@ struct ZoomableImageView: UIViewRepresentable {
         single.require(toFail: double)
 
         let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
+        // 用默认 contentMode（scaleToFill）：frame 直接 = 图片尺寸，1:1 对应，
+        // 缩放交给 UIScrollView 的 transform，不做二次缩放。
         imageView.isUserInteractionEnabled = true
         scroll.addSubview(imageView)
         context.coordinator.imageView = imageView
@@ -156,16 +157,24 @@ struct ZoomableImageView: UIViewRepresentable {
         }
 
         private func centerContent(in scroll: UIScrollView) {
+            // Apple PhotoScroller 同款：不碰 contentInset，直接调 imageView.center。
+            // contentSize 在缩放时是「图片尺寸 × zoomScale」，居中 = 让 imageView
+            // 的中心落在「contentSize 中心 + 可视区多出的边距」。
             guard let imageView else { return }
-            let bounds = scroll.bounds.size
-            // 用缩放后的实际尺寸算居中（frame 是未缩放的，要乘 zoomScale）。
-            let frame = imageView.frame
-            let z = scroll.zoomScale
-            let scaledW = frame.width * z
-            let scaledH = frame.height * z
-            let x = max(0, (bounds.width - scaledW) / 2)
-            let y = max(0, (bounds.height - scaledH) / 2)
-            scroll.contentInset = UIEdgeInsets(top: y, left: x, bottom: y, right: x)
+            let boundsSize = scroll.bounds.size
+            var frameToCenter = imageView.frame
+
+            if frameToCenter.size.width < boundsSize.width {
+                frameToCenter.origin.x = (boundsSize.width - frameToCenter.size.width) / 2
+            } else {
+                frameToCenter.origin.x = 0
+            }
+            if frameToCenter.size.height < boundsSize.height {
+                frameToCenter.origin.y = (boundsSize.height - frameToCenter.size.height) / 2
+            } else {
+                frameToCenter.origin.y = 0
+            }
+            imageView.frame = frameToCenter
         }
 
         // MARK: UIScrollViewDelegate
