@@ -264,6 +264,7 @@ struct ReaderView: View {
         diag("reader", "next chapter from=\(model.currentItem.displayName) index=\(model.index + 1)/\(model.pageCount)")
         saveProgress(page: max(0, model.pageCount - 1))
         _ = await model.advanceChapter(direction: 1)
+        await resetVerticalScroll()
     }
 
     /// Jumps straight to a chapter picked from the list, keeping its own saved
@@ -278,8 +279,15 @@ struct ReaderView: View {
         let saved = store.recentPage(for: target.url)
         guard await model.jump(to: index, startPage: saved) else { return }
 
-        // Reposition the webtoon scroller; `scrollPosition` needs a nil gap to
-        // actually move when the new chapter lands on the same page index.
+        await resetVerticalScroll()
+    }
+
+    /// 换章后把条漫的滚动位置挪到新章开头。
+    ///
+    /// `scrollPosition` 的 id 还指着上一章的页序号（比如 15），画面就会停在
+    /// 中后段，看起来像「没从头开始」—— 其实页码早就归零了。
+    /// 必须先置 nil 让它松开，再设成新页码，中间留一帧。
+    private func resetVerticalScroll() async {
         verticalPageID = nil
         try? await Task.sleep(nanoseconds: 60_000_000)
         verticalPageID = model.index
@@ -292,6 +300,7 @@ struct ReaderView: View {
         diag("reader", "prev chapter from=\(model.currentItem.displayName) index=\(model.index + 1)/\(model.pageCount)")
         saveProgress(page: max(0, model.index))
         _ = await model.advanceChapter(direction: -1)
+        await resetVerticalScroll()
     }
 
     // MARK: - Chrome (Liquid Glass on iOS 26)
