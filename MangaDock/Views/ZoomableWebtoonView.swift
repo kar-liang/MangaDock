@@ -12,8 +12,9 @@ import UIKit
 /// 「局部查看 + 拖动」的相册手感，边界回弹、松手回弹全免费。
 ///
 /// 手势冲突：
-/// - 1x 时让 UIScrollView 的 pan 手势失败，垂直拖动交给外层 ScrollView 滚；
-/// - 放大后 UIScrollView 接管拖动，单指在图片内平移看细节；
+/// - 1x 时禁用 UIScrollView 的 pan（不跟外层 ScrollView 抢垂直拖动），
+///   捏合手势不受影响（pinch 是独立手势）；
+/// - 放大后重新启用 pan，单指在图片内平移看细节；
 /// - 捏回 1x 自动复位。
 struct ZoomableWebtoonView: UIViewRepresentable {
     let image: UIImage
@@ -38,8 +39,10 @@ struct ZoomableWebtoonView: UIViewRepresentable {
         scroll.backgroundColor = .clear
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.delaysContentTouches = false
-        // 1x 时不跟外层 ScrollView 抢垂直拖动
-        scroll.panGestureRecognizer.delegate = context.coordinator
+        // 1x 时不跟外层 ScrollView 抢垂直拖动。注意：不要改
+        // panGestureRecognizer.delegate（会触发 UIKit 内部断言闪退），
+        // 而是直接禁用 pan（不影响捏合，捏合是独立的 pinch 手势）。
+        scroll.panGestureRecognizer.isEnabled = false
 
         let single = UITapGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleSingleTap(_:)))
@@ -74,7 +77,7 @@ struct ZoomableWebtoonView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate {
         var parent: ZoomableWebtoonView
         var imageView: UIImageView?
         weak var scrollView: UIScrollView?
@@ -139,21 +142,15 @@ struct ZoomableWebtoonView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             centerContent(in: scrollView)
-            parent.onZoomActiveChange?(scrollView.zoomScale > 1.01)
+            // 放大后启用 pan（拖动看局部），1x 时禁用（让位外层滚动）。
+            let zoomed = scrollView.zoomScale > 1.01
+            scrollView.panGestureRecognizer.isEnabled = zoomed
+            parent.onZoomActiveChange?(zoomed)
         }
 
         /// 没放大时 UIScrollView 不接管拖动，让外层 ScrollView 滚。
         func scrollViewShouldBeginDragging(_ scrollView: UIScrollView) -> Bool {
             scrollView.zoomScale > 1.01
-        }
-
-        // MARK: UIGestureRecognizerDelegate
-
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer === scrollView?.panGestureRecognizer {
-                return (scrollView?.zoomScale ?? 1) > 1.01
-            }
-            return true
         }
     }
 }

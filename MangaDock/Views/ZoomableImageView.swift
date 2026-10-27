@@ -34,8 +34,10 @@ struct ZoomableImageView: UIViewRepresentable {
         scroll.backgroundColor = .black
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.delaysContentTouches = false
-        // 1x 时不跟外层 UIPageViewController 抢横向拖动
-        scroll.panGestureRecognizer.delegate = context.coordinator
+        // 1x 时不跟外层 UIPageViewController 抢横向拖动。不要改
+        // panGestureRecognizer.delegate（会触发 UIKit 内部断言闪退），
+        // 而是直接禁用 pan（1x 时一页一屏本就不需要拖动，翻页由外层处理）。
+        scroll.panGestureRecognizer.isEnabled = false
 
         let single = UITapGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleSingleTap(_:)))
@@ -69,7 +71,7 @@ struct ZoomableImageView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate {
         var imageView: UIImageView?
         weak var scrollView: UIScrollView?
         var onTap: (() -> Void)?
@@ -136,20 +138,13 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             centerContent(in: scrollView)
+            // 放大后启用 pan（拖动看局部），1x 时禁用（让位外层翻页）。
+            scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
         }
 
         /// 没放大时 UIScrollView 不开始拖动，把横向手势让给外层翻页。
         func scrollViewShouldBeginDragging(_ scrollView: UIScrollView) -> Bool {
             scrollView.zoomScale > 1.01
-        }
-
-        // MARK: UIGestureRecognizerDelegate
-
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer === scrollView?.panGestureRecognizer {
-                return (scrollView?.zoomScale ?? 1) > 1.01
-            }
-            return true
         }
     }
 }
