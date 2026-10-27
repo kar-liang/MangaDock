@@ -62,11 +62,14 @@ struct ReaderView: View {
             // 捏合后就地浮出的缩放图层。盖在阅读器上，不是新页面 ——
             // 单击收起，底下那页还在原来的位置。
             if let image = zoomedImage {
-                ZoomableImageView(image: image, blocksParentScroll: true) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        zoomedImage = nil
-                    }
-                }
+                // 显式写 onTap: —— 尾随闭包会被绑到最后的 onDoubleTap 上
+                ZoomableImageView(image: image,
+                                 onTap: {
+                                     withAnimation(.easeOut(duration: 0.18)) {
+                                         zoomedImage = nil
+                                     }
+                                 },
+                                 blocksParentScroll: true)
                 .ignoresSafeArea()
                 .zIndex(10)
             }
