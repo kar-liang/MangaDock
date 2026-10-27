@@ -249,13 +249,23 @@ struct WebtoonReaderView: UIViewRepresentable {
             let target: CGFloat = scrollView.zoomScale > 1.05 ? 1 : 2
             if target > 1.05 {
                 // 放大：以点击位置为锚点（双击哪里放大哪里），跟相册一致。
-                let point = recognizer.location(in: scrollView)
-                let contentPoint = scrollView.convert(point, to: contentView)
+                let pointInView = recognizer.location(in: scrollView)
+                // 手动换算到 content 坐标（比 convert(to:) 稳，不受 zoomScale 历史影响）。
+                let contentPoint = CGPoint(
+                    x: (pointInView.x + scrollView.contentOffset.x) / scrollView.zoomScale,
+                    y: (pointInView.y + scrollView.contentOffset.y) / scrollView.zoomScale
+                )
                 let w = scrollView.bounds.width / target
                 let h = scrollView.bounds.height / target
-                let rect = CGRect(x: contentPoint.x - w / 2,
+                var rect = CGRect(x: contentPoint.x - w / 2,
                                   y: contentPoint.y - h / 2,
                                   width: w, height: h)
+                // 关键：rect 必须 clamp 进内容边界。条漫 contentView 宽度 = 屏宽，
+                // 点右半边时 rect 会越出右边界，UIScrollView 会把 contentOffset
+                // 错夹回左边（「点右半边却放大左半边」的根因）。
+                let contentSize = scrollView.contentSize
+                rect.origin.x = min(max(rect.origin.x, 0), max(0, contentSize.width - w))
+                rect.origin.y = min(max(rect.origin.y, 0), max(0, contentSize.height - h))
                 scrollView.zoom(to: rect, animated: true)
             } else {
                 scrollView.setZoomScale(target, animated: true)

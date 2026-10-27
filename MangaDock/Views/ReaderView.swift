@@ -180,6 +180,7 @@ struct ReaderView: View {
                 }
             )
             .id(model.currentItem.url)
+            .ignoresSafeArea()
             .onAppear {
                 diag("webtoon", "appear chapter=\(model.currentItem.displayName) index=\(model.index) pages=\(model.pageCount)")
                 chapterJumpArmed = false
