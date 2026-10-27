@@ -22,6 +22,8 @@ struct ReaderView: View {
     /// Tracks the top visible page in webtoon mode — the real reading progress
     /// there, since `model.index` only moves in paged mode.
     @State private var verticalPageID: Int?
+    /// 条漫模式捏合后浮出的放大图层。覆盖在阅读器上，不是新页面。
+    @State private var zoomedImage: UIImage?
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -55,6 +57,18 @@ struct ReaderView: View {
                     // to hide every control until the chapter finished loading.
                     loadingBar
                 }
+            }
+
+            // 捏合后就地浮出的缩放图层。盖在阅读器上，不是新页面 ——
+            // 单击收起，底下那页还在原来的位置。
+            if let image = zoomedImage {
+                ZoomableImageView(image: image, blocksParentScroll: true) {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        zoomedImage = nil
+                    }
+                }
+                .ignoresSafeArea()
+                .zIndex(10)
             }
         }
         // A comic reader stays dark no matter the app theme — glass and text here
@@ -157,7 +171,12 @@ struct ReaderView: View {
             LazyVStack(spacing: 6) {
                 ForEach(0..<model.pageCount, id: \.self) { position in
                     ComicPageView(model: model, index: position,
-                                  onTap: toggleBars, stableHeight: true)
+                                  onTap: toggleBars, stableHeight: true,
+                                  onZoomRequest: { image in
+                                      withAnimation(.easeOut(duration: 0.18)) {
+                                          zoomedImage = image
+                                      }
+                                  })
                         .id(position)
                         .frame(maxWidth: .infinity)
                 }

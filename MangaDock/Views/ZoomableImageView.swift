@@ -18,9 +18,12 @@ struct ZoomableImageView: UIViewRepresentable {
     var onTap: (() -> Void)?
     /// 双击 —— 默认在 1x 与 2.5x 之间切换
     var onDoubleTap: ((CGFloat) -> Void)?
+    /// 覆盖层模式：始终吞掉拖动，1x 时也不让底下的滚动视图跟着滚。
+    /// 嵌在分页里时传 false —— 1x 要把横向手势让给翻页。
+    var blocksParentScroll: Bool = false
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap, onDoubleTap: onDoubleTap)
+        Coordinator(onTap: onTap, onDoubleTap: onDoubleTap, blocksParentScroll: blocksParentScroll)
     }
 
     func makeUIView(context: Context) -> UIScrollView {
@@ -38,7 +41,7 @@ struct ZoomableImageView: UIViewRepresentable {
         // 只关 pan 手势：isScrollEnabled=false 会连 pinch 缩放一起废掉；
         // 覆盖 panGestureRecognizer.delegate 会被 UIKit 内部依赖搞崩。
         // 禁用手势不是改 delegate，UIKit 内部关系不受影响。
-        scroll.panGestureRecognizer.isEnabled = false
+        scroll.panGestureRecognizer.isEnabled = blocksParentScroll
 
         let single = UITapGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleSingleTap(_:)))
@@ -79,12 +82,14 @@ struct ZoomableImageView: UIViewRepresentable {
         weak var scrollView: UIScrollView?
         var onTap: (() -> Void)?
         var onDoubleTap: ((CGFloat) -> Void)?
+        let blocksParentScroll: Bool
 
         private var pendingSingleTap: Task<Void, Never>?
 
-        init(onTap: (() -> Void)?, onDoubleTap: ((CGFloat) -> Void)?) {
+        init(onTap: (() -> Void)?, onDoubleTap: ((CGFloat) -> Void)?, blocksParentScroll: Bool) {
             self.onTap = onTap
             self.onDoubleTap = onDoubleTap
+            self.blocksParentScroll = blocksParentScroll
         }
 
         // MARK: Tap
@@ -105,7 +110,7 @@ struct ZoomableImageView: UIViewRepresentable {
             let current = scroll?.zoomScale ?? 1
             let target: CGFloat = current > 1.05 ? 1 : 2.5
             scroll?.setZoomScale(target, animated: true)
-            scroll?.panGestureRecognizer.isEnabled = target > 1.01
+            scroll?.panGestureRecognizer.isEnabled = blocksParentScroll || target > 1.01
             onDoubleTap?(target)
         }
 
@@ -151,28 +156,10 @@ struct ZoomableImageView: UIViewRepresentable {
             pendingSingleTap?.cancel()
             pendingSingleTap = nil
             centerContent(in: scrollView)
-            // 放大后才允许拖动看细节；1x 时把拖动让给翻页
-            scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
+            // 放大后才允许拖动看细节；1x 时把拖动让给翻页。
+            // 覆盖层模式例外：它就该吞掉拖动，免得底下的页面跟着一起滚。
+            scrollView.panGestureRecognizer.isEnabled = blocksParentScroll || scrollView.zoomScale > 1.01
         }
 
-    }
-}
-
-/// 单页全屏缩放查看。条漫模式下用：长条页面在滚动流里没法放大，
-/// 双击进这里看细节。
-struct PageZoomSheet: View {
-    let image: UIImage
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            ZoomableImageView(image: image) {
-                dismiss()
-            }
-            .ignoresSafeArea()
-        }
-        .statusBarHidden()
     }
 }

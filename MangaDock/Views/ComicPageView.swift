@@ -9,12 +9,13 @@ struct ComicPageView: View {
     /// Vertical mode needs a height that doesn't change after the image arrives,
     /// otherwise reflow above the viewport yanks the scroll offset around.
     var stableHeight: Bool = false
+    /// 条漫模式：双指捏合这一页时回调，由阅读器浮出可自由缩放的图层。
+    /// 原地放大，不跳到别的页面去。
+    var onZoomRequest: ((UIImage) -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
     @State private var loadedGeneration = 0
-    /// 条漫模式：双击进全屏看细节（长条页面在滚动流里没法直接放大）
-    @State private var showZoomSheet = false
 
     var body: some View {
         Group {
@@ -37,16 +38,16 @@ struct ComicPageView: View {
             if stableHeight || image == nil { onTap?() }
         }
         .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                guard stableHeight, let image else { return }
-                showZoomSheet = true
-            }
+            // 条漫模式：双指捏合就地放大这一页。MagnifyGesture 是双指，
+            // 和 ScrollView 的单指滚动不打架。
+            MagnifyGesture()
+                .onChanged { value in
+                    guard stableHeight, let image else { return }
+                    if value.magnification > 1.06 {
+                        onZoomRequest?(image)
+                    }
+                }
         )
-        .fullScreenCover(isPresented: $showZoomSheet) {
-            if let image {
-                PageZoomSheet(image: image)
-            }
-        }
         .task(id: "\(index)-\(model.enhanceGeneration)") {
             // Only drop the decoded image when the enhance mode actually changed.
             if loadedGeneration != model.enhanceGeneration {
