@@ -93,7 +93,8 @@ struct WebtoonReaderView: UIViewRepresentable {
         /// 每页布局时用的宽高比缓存（用于检测 aspect 变化后重排）。
         private var layoutAspects: [CGFloat] = []
         /// 上次布局用的宽度，检测 pageWidth 变化后重排（初始 pageWidth 可能为 0）。
-        private var layoutWidth: CGFloat = 0
+        /// 非 private：updateUIView（结构体侧）需要读写它。
+        var layoutWidth: CGFloat = 0
         /// 已加载（持有 image）的页集合，用于按需卸载。
         private var loadedPages: Set<Int> = []
         /// 正在加载的页任务，避免重复加载。
