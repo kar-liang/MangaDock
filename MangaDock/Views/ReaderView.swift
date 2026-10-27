@@ -271,8 +271,11 @@ struct ReaderView: View {
         defer { isAdvancing = false }
         diag("reader", "next chapter from=\(model.currentItem.displayName) index=\(model.index + 1)/\(model.pageCount)")
         saveProgress(page: max(0, model.pageCount - 1))
+        // 必须在换章**之前**松开：advanceChapter 会改动 currentItem，
+        // ScrollView 的 .id 立刻变化触发重建，而重建时的 onAppear 只在
+        // verticalPageID == nil 时才写新值。放后面就来不及了。
+        resetVerticalScroll()
         _ = await model.advanceChapter(direction: 1)
-        await resetVerticalScroll()
     }
 
     /// Jumps straight to a chapter picked from the list, keeping its own saved
@@ -285,15 +288,17 @@ struct ReaderView: View {
         jumpAllowedAfter = Date().addingTimeInterval(0.8)
 
         let saved = store.recentPage(for: target.url)
+        resetVerticalScroll()
         guard await model.jump(to: index, startPage: saved) else { return }
-
-        await resetVerticalScroll()
     }
 
-    /// 换章后松开滚动绑定。真正的归零靠 ScrollView 上的 `.id(item.url)` ——
-    /// 容器重建时 onAppear 会把位置设成新章的 model.index（= 0）。
-    /// 早先在这里手动「置 nil → 等 60ms → 设新值」，时序不稳，实测无效。
-    private func resetVerticalScroll() async {
+    /// 换章**前**松开滚动绑定。
+    ///
+    /// 真正的归零有两个条件：ScrollView 挂 `.id(item.url)`（换章即重建）+
+    /// 重建那一刻 `verticalPageID == nil`（onAppear 才会写 model.index）。
+    /// 只要在 advanceChapter 之前置 nil，重建时就一定会归零。
+    /// 反过来（换完再置 nil）没用 —— 重建已经用旧页号定位过了。
+    private func resetVerticalScroll() {
         verticalPageID = nil
     }
 
@@ -303,8 +308,8 @@ struct ReaderView: View {
         defer { isAdvancing = false }
         diag("reader", "prev chapter from=\(model.currentItem.displayName) index=\(model.index + 1)/\(model.pageCount)")
         saveProgress(page: max(0, model.index))
+        resetVerticalScroll()
         _ = await model.advanceChapter(direction: -1)
-        await resetVerticalScroll()
     }
 
     // MARK: - Chrome (Liquid Glass on iOS 26)
