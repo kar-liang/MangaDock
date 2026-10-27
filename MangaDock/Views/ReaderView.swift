@@ -24,8 +24,10 @@ struct ReaderView: View {
     @State private var verticalPageID: Int?
     /// 条漫模式可用宽度，量一次传给每页算原始高度。
     @State private var pageWidth: CGFloat = 0
-    /// 条漫模式下某一页正在放大。放大时禁用整页滚动，单指拖动专注看局部。
-    @State private var zoomActive = false
+    /// 条漫模式「整章缩放」倍数（1 = 原尺寸）。所有页一起变大，捏合/双击调整。
+    @State private var webtoonZoomRatio: CGFloat = 1
+    /// 捏合手势开始时的缩放倍数，用于累计（MagnifyGesture 的 magnification 每次从 1 起）。
+    @State private var pinchStartRatio: CGFloat = 1
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -161,11 +163,11 @@ struct ReaderView: View {
             LazyVStack(spacing: 6) {
                 ForEach(0..<model.pageCount, id: \.self) { position in
                     ComicPageView(model: model, index: position,
-                                  onTap: toggleBars, stableHeight: true,
+                                  onTap: toggleBars,
+                                  onDoubleTap: toggleWebtoonZoom,
+                                  stableHeight: true,
                                   pageWidth: pageWidth,
-                                  onZoomActiveChange: { active in
-                                      zoomActive = active
-                                  })
+                                  zoomRatio: $webtoonZoomRatio)
                         .id(position)
                         .frame(maxWidth: .infinity)
                 }
@@ -178,8 +180,17 @@ struct ReaderView: View {
             .scrollTargetLayout()
         }
         .background(Color.black)
-        // 放大状态下禁用整页滚动：单指这时是「拖图看局部」而不是「滚页面」。
-        .scrollDisabled(zoomActive)
+        // 整章缩放：双指捏合调整全局倍数（不影响单指滚动翻页）。
+        .simultaneousGesture(
+            MagnifyGesture()
+                .onChanged { value in
+                    let next = min(max(pinchStartRatio * value.magnification, 1), 4)
+                    webtoonZoomRatio = next
+                }
+                .onEnded { _ in
+                    pinchStartRatio = webtoonZoomRatio
+                }
+        )
         // 量一次可用宽度，够算每页的原始高度（不做嵌套测量）。
         .background(
             GeometryReader { geo in
@@ -273,6 +284,14 @@ struct ReaderView: View {
         withAnimation(.easeInOut(duration: 0.15)) { showBars.toggle() }
     }
 
+    /// 双击切换整章缩放：1× ↔ 2×。
+    private func toggleWebtoonZoom() {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            webtoonZoomRatio = webtoonZoomRatio > 1.05 ? 1 : 2
+        }
+        pinchStartRatio = webtoonZoomRatio
+    }
+
     private func revealBars() {
         withAnimation(.easeInOut(duration: 0.15)) { showBars = true }
     }
@@ -318,7 +337,8 @@ struct ReaderView: View {
     /// 反过来（换完再置 nil）没用 —— 重建已经用旧页号定位过了。
     private func resetVerticalScroll() {
         verticalPageID = nil
-        zoomActive = false
+        webtoonZoomRatio = 1
+        pinchStartRatio = 1
     }
 
     private func goPreviousChapter() async {

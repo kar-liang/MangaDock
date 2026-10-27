@@ -187,4 +187,5 @@ ZIP 解析是自己写的（`Core/ZipArchive.swift`），只依赖系统 `Compre
 | 2.0.7 | 修缩放导致的闪退：不再覆盖 UIScrollView pan 手势的 delegate（改禁用 pan） |
 | 2.0.8 | 修缩放初始即放大、缩不回正常：改用相册同款 fit 缩放范式（frame=原图尺寸，zoomScale 从 fit 起算） |
 | 2.0.9 | 修翻页模式缩放后不居中：居中改用 PhotoScroller 同款 frame 定位，不用 contentInset |
+| 2.0.10 | 条漫缩放改为「整章一起变大」：全局倍数撑开所有页占位，捏合/双击统一缩放 |
 
