@@ -13,6 +13,8 @@ struct ComicPageView: View {
     @State private var image: UIImage?
     @State private var failed = false
     @State private var loadedGeneration = 0
+    /// 条漫模式：双击进全屏看细节（长条页面在滚动流里没法直接放大）
+    @State private var showZoomSheet = false
 
     var body: some View {
         Group {
@@ -30,7 +32,20 @@ struct ComicPageView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            onTap?()
+            // 分页模式下单击/双击由 ZoomableImageView 统一判定（单击要等双击
+            // 窗口结束），这里只在没有缩放组件时兜底。
+            if stableHeight || image == nil { onTap?() }
+        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                guard stableHeight, let image else { return }
+                showZoomSheet = true
+            }
+        )
+        .sheet(isPresented: $showZoomSheet) {
+            if let image {
+                PageZoomSheet(image: image)
+            }
         }
         .task(id: "\(index)-\(model.enhanceGeneration)") {
             // Only drop the decoded image when the enhance mode actually changed.
@@ -51,10 +66,15 @@ struct ComicPageView: View {
     @ViewBuilder
     private var pageContent: some View {
         if let image {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if stableHeight {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // 分页模式：交给 UIScrollView，支持捏合 + 双击放大
+                ZoomableImageView(image: image, onTap: onTap)
+            }
         } else if failed {
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")
