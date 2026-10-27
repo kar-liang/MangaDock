@@ -23,10 +23,11 @@ struct ServerSettingsView: View {
     var body: some View {
         Form {
             Section {
-                TextField("http://192.168.2.144:5005/dav/Comics", text: $serverURL)
+                TextField("每行一个地址，如 http://192.168.2.144:5005/dav/Comics", text: $serverURL, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
+                    .lineLimit(3...6)
                 TextField("用户名", text: $username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -34,7 +35,7 @@ struct ServerSettingsView: View {
             } header: {
                 Text("WebDAV 服务器")
             } footer: {
-                Text("地址直接填漫画所在的目录，例如 http://主机:端口/dav/Comics。不写 http:// 也能识别，局域网服务用 http 就行。")
+                Text("每行填一个地址，启动时自动用能连上的那个（适合同一个库的局域网 IP + 公网域名）。用户名密码对所有地址通用。")
             }
 
             Section {
@@ -123,14 +124,19 @@ struct ServerSettingsView: View {
     private func runDiagnostics() async {
         diagRunning = true
         diagResults = []
-        diagResults = await NetDiagnostics.run(store.serverURL)
+        // 多地址时诊断第一个地址（探测会自动切换，诊断只针对单一地址排查）。
+        let raw = store.serverURLs.first?.absoluteString ?? store.serverURL
+        diagResults = await NetDiagnostics.run(raw)
         diagRunning = false
     }
 
     private func testAndSave() async {
-        let trimmed = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            message = "先把服务器地址填上"
+        let lines = serverURL
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else {
+            message = "先把服务器地址填上（每行一个）"
             isError = true
             return
         }
@@ -138,31 +144,29 @@ struct ServerSettingsView: View {
         isTesting = true
         message = nil
 
-        var text = trimmed
-        let lower = text.lowercased()
-        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
-            text = "http://" + text
-        }
-        while text.hasSuffix("/") && text.count > 8 {
-            text.removeLast()
+        var ok = 0
+        var failures: [String] = []
+        for line in lines {
+            guard let url = AppStore.normalizedURL(line), url.host != nil else {
+                failures.append("\(line)：格式不对")
+                continue
+            }
+            let client = WebDAVClient(username: username, password: password, baseURL: url)
+            do {
+                _ = try await client.ping()
+                ok += 1
+            } catch {
+                failures.append("\(url.host ?? line)：\(NetErrorText.friendly(error))")
+            }
         }
 
-        guard let url = URL(string: text), url.host != nil else {
-            message = "地址格式不对，示例：http://192.168.2.144:5005/dav/Comics"
-            isError = true
-            isTesting = false
-            return
-        }
-
-        let client = WebDAVClient(username: username, password: password, baseURL: url)
-        do {
-            let items = try await client.list(url)
-            let comicCount = items.filter { $0.isDirectory || $0.isArchive }.count
-            store.save(serverURL: text, username: username, password: password)
-            message = "连接成功，找到 \(items.count) 项（其中 \(comicCount) 个目录/压缩包）"
+        if ok > 0 {
+            store.save(serverURL: serverURL, username: username, password: password)
+            let suffix = failures.isEmpty ? "" : "（\(failures.count) 个连不上）"
+            message = "\(ok) 个地址可用\(suffix)"
             isError = false
-        } catch {
-            message = NetErrorText.friendly(error)
+        } else {
+            message = "全部连不上：\(failures.joined(separator: "；"))"
             isError = true
         }
         isTesting = false

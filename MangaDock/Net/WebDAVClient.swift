@@ -35,14 +35,14 @@ final class WebDAVClient: @unchecked Sendable {
     private let session: URLSession
     private let sessionDelegate: WebDAVSessionDelegate
 
-    init(username: String, password: String, baseURL: URL) {
+    init(username: String, password: String, baseURL: URL, timeout: TimeInterval = 30) {
         self.username = username
         self.password = password
         self.baseURL = baseURL
 
         let delegate = WebDAVSessionDelegate(username: username, password: password)
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = 900
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.httpMaximumConnectionsPerHost = 4
@@ -102,6 +102,19 @@ final class WebDAVClient: @unchecked Sendable {
             return NaturalSort.less(lhs.name, rhs.name)
         }
         return items
+    }
+
+    /// 轻量连通性探测：PROPFIND Depth 0，只确认服务器可达 + 认证通过，
+    /// 不列子项（比 list 快得多，多地址切换时用它逐个试）。
+    func ping() async throws {
+        var request = makeRequest(url: WebDAVItem.directoryURL(baseURL), method: "PROPFIND")
+        request.setValue("0", forHTTPHeaderField: "Depth")
+        request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(Self.propfindBody.utf8)
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
+        let accepted = (200...299).contains(http.statusCode) || http.statusCode == 207
+        guard accepted else { throw WebDAVError.badStatus(http.statusCode) }
     }
 
     // MARK: - Fetching

@@ -83,22 +83,62 @@ final class AppStore: ObservableObject {
 
     // MARK: - Derived
 
+    /// 解析多行地址（换行分隔）为规范化 URL 列表。向后兼容单地址。
+    var serverURLs: [URL] {
+        serverURL
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .compactMap { Self.normalizedURL($0) }
+    }
+
+    /// 探测到的可用地址（内存态，不持久化，每次启动重新探测）。
+    private var activeURL: URL?
+
+    /// 逐个探测地址，返回第一个能连上的。只有一个地址时直接用（不探测）。
+    /// 全部失败则回退到第一个，让后续请求正常报错而非空转。
+    @discardableResult
+    func probeServers() async -> URL? {
+        let urls = serverURLs
+        guard !urls.isEmpty else { return nil }
+        if urls.count == 1 {
+            activeURL = urls[0]
+            return urls[0]
+        }
+        let username = self.username
+        let password = self.password
+        for url in urls {
+            // 短超时探测，连不上的地址快速跳过，不干等 30 秒。
+            let client = WebDAVClient(username: username, password: password, baseURL: url, timeout: 3)
+            if (try? await client.ping()) != nil {
+                activeURL = url
+                return url
+            }
+        }
+        activeURL = urls[0]
+        return urls[0]
+    }
+
     var baseURL: URL? {
-        let trimmed = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        var text = trimmed
-        let lower = text.lowercased()
-        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
-            text = "http://" + text
-        }
-        while text.hasSuffix("/") && text.count > "http://".count + 1 {
-            text.removeLast()
-        }
-        return URL(string: text)
+        if let activeURL { return activeURL }
+        return serverURLs.first
     }
 
     var isConfigured: Bool {
-        baseURL != nil
+        !serverURLs.isEmpty
+    }
+
+    static func normalizedURL(_ text: String) -> URL? {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        let lower = t.lowercased()
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
+            t = "http://" + t
+        }
+        while t.hasSuffix("/") && t.count > "http://".count + 1 {
+            t.removeLast()
+        }
+        return URL(string: t)
     }
 
     var baseTitle: String {

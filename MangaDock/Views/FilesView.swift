@@ -59,7 +59,7 @@ struct FilesView: View {
                 Text(store.baseTitle)
             } footer: {
                 if !loader.isLoading && loader.errorMessage == nil {
-                    Text("长按任意条目可以加入书架 · \(store.serverURL)")
+                    Text("长按任意条目可以加入书架 · \(store.baseURL?.host ?? "")")
                         .font(.caption2)
                 }
             }
