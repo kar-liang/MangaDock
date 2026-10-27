@@ -239,7 +239,23 @@ final class ReaderModel: ObservableObject {
 
         if item.isArchive || item.isPDF {
             let cacheURL = CacheManager.archiveURL(for: item.url)
-            if !CacheManager.hasArchive(for: item.url) {
+            let cached = CacheManager.hasArchive(for: item.url)
+
+            // 没下载过的 CBZ：先走远程随机读，别等整包。
+            // 整包几十 MB，5G 上要几十秒；Range 读两次请求就能出第一页。
+            // 不自动补下整包 —— 老大常在移动网络上看，别偷跑流量。
+            // 想要后续零延迟，用「下载本章」。
+            if !cached, item.isArchive,
+               let remote = try? await RemoteZipComicSource(url: item.url, client: client) {
+                diag("prepare", "REMOTEZIP \(item.name) pages=\(remote.pageCount)")
+                if !silent {
+                    statusText = ""
+                    downloadProgress = nil
+                }
+                return remote
+            }
+
+            if !cached {
                 if !silent { statusText = "正在下载 \(item.displayName)…" }
                 try await client.download(item.url, to: cacheURL) { [weak self] value in
                     guard !silent else { return }

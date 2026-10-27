@@ -39,6 +39,7 @@ struct CoverBox: View {
     @State private var attempted = false
     @State private var showPhotoPicker = false
     @State private var pickedPhoto: PhotosPickerItem?
+    @State private var confirmClearHistory = false
 
     var body: some View {
         Color.clear
@@ -63,6 +64,16 @@ struct CoverBox: View {
             .photosPicker(isPresented: $showPhotoPicker,
                           selection: $pickedPhoto,
                           matching: .images)
+            .confirmationDialog("清除所有阅读记录？",
+                                isPresented: $confirmClearHistory,
+                                titleVisibility: .visible) {
+                Button("清除", role: .destructive) {
+                    store.clearRecent()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("所有书的阅读进度会被清空，「继续阅读」也会消失。已读标记不受影响。")
+            }
             .onChange(of: pickedPhoto) { newValue in
                 guard let newValue else { return }
                 Task { await applyCustomCover(newValue) }
@@ -95,7 +106,7 @@ struct CoverBox: View {
         }
 
         if shelfAction == .toggle {
-            ShelfMenu(item: item)
+            ShelfMenu(item: item) { confirmClearHistory = true }
         }
 
         Button {

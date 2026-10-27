@@ -59,6 +59,9 @@ enum ItemTile {
 /// Context-menu entry that adds/removes an item from the bookshelf.
 struct ShelfMenu: View {
     let item: WebDAVItem
+    /// 「清除所有阅读记录」的确认弹窗要挂在 CoverBox 上 ——
+    /// contextMenu 里的视图在菜单关闭后就没法再弹 dialog 了。
+    var onClearHistory: (() -> Void)? = nil
 
     private var onShelf: Bool {
         ShelfStore.shared.contains(item)
@@ -76,6 +79,14 @@ struct ShelfMenu: View {
             PrivacyStore.shared.hide(item)
         } label: {
             Label("隐藏进隐私空间", systemImage: "lock")
+        }
+
+        if let onClearHistory {
+            Button(role: .destructive) {
+                onClearHistory()
+            } label: {
+                Label("清除所有阅读记录", systemImage: "clock.arrow.circlepath")
+            }
         }
     }
 }
