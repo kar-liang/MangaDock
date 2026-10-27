@@ -22,6 +22,10 @@ struct ReaderView: View {
     /// Tracks the top visible page in webtoon mode — the real reading progress
     /// there, since `model.index` only moves in paged mode.
     @State private var verticalPageID: Int?
+    /// 条漫模式可用宽度，量一次传给每页算原始高度。
+    @State private var pageWidth: CGFloat = 0
+    /// 条漫模式下某一页正在放大。放大时禁用整页滚动，单指拖动专注看局部。
+    @State private var zoomActive = false
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -157,7 +161,11 @@ struct ReaderView: View {
             LazyVStack(spacing: 6) {
                 ForEach(0..<model.pageCount, id: \.self) { position in
                     ComicPageView(model: model, index: position,
-                                  onTap: toggleBars, stableHeight: true)
+                                  onTap: toggleBars, stableHeight: true,
+                                  pageWidth: pageWidth,
+                                  onZoomActiveChange: { active in
+                                      zoomActive = active
+                                  })
                         .id(position)
                         .frame(maxWidth: .infinity)
                 }
@@ -170,6 +178,16 @@ struct ReaderView: View {
             .scrollTargetLayout()
         }
         .background(Color.black)
+        // 放大状态下禁用整页滚动：单指这时是「拖图看局部」而不是「滚页面」。
+        .scrollDisabled(zoomActive)
+        // 量一次可用宽度，够算每页的原始高度（不做嵌套测量）。
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { pageWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in pageWidth = w }
+            }
+        )
         // 换章时整块重建。ForEach 的 id 是 0..<pageCount，新旧章节的 id 完全
         // 重合，scrollPosition 认不出换了一章，会把旧页号套到新内容上 ——
         // 表现就是「进下一章还停在中后段」。换 identity 是最干脆的归零方式。
@@ -300,6 +318,7 @@ struct ReaderView: View {
     /// 反过来（换完再置 nil）没用 —— 重建已经用旧页号定位过了。
     private func resetVerticalScroll() {
         verticalPageID = nil
+        zoomActive = false
     }
 
     private func goPreviousChapter() async {
