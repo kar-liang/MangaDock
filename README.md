@@ -192,4 +192,5 @@ ZIP 解析是自己写的（`Core/ZipArchive.swift`），只依赖系统 `Compre
 | 2.0.12 | 条漫缩放重写为原生整章缩放：UIKit UIScrollView 承载整章，捏合/双击/拖动/回弹全系统原生，跟单张图片一致 |
 | 2.0.13 | 修条漫上下黑边（pageWidth 首屏时序）+ 双击改「点哪放大哪」+ 分页模式放大后左右点击不再翻页 |
 | 2.0.14 | 修条漫 safe area 上下黑边（verticalReader 加 ignoresSafeArea）+ 条漫双击锚点 clamp 进边界（点右半边不再放大左半边） |
+| 2.0.15 | 修分页模式双击中间误触发工具栏切换：单击 vs 双击手势不同时识别，让 require(toFail:) 生效；分页双击补 clamp |
 

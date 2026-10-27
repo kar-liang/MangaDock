@@ -120,7 +120,15 @@ struct PagePager: UIViewControllerRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            true
+            // 单击 vs 双击手势不能同时识别：否则 tap.require(toFail: doubleTap) 失效，
+            // 双击时第一下的单击（左右翻页/中间 toggleBars）也会触发。
+            // 其余组合（单击 vs 翻页滑动 pan、双击 vs 页内双击）保持同时识别。
+            if let a = gestureRecognizer as? UITapGestureRecognizer,
+               let b = otherGestureRecognizer as? UITapGestureRecognizer,
+               a.numberOfTapsRequired != b.numberOfTapsRequired {
+                return false
+            }
+            return true
         }
 
         // MARK: Paging

@@ -119,9 +119,14 @@ struct ZoomableImageView: UIViewRepresentable {
                 let contentPoint = scroll.convert(point, to: scroll.subviews.first)
                 let w = scroll.bounds.width / target
                 let h = scroll.bounds.height / target
-                let rect = CGRect(x: contentPoint.x - w / 2,
+                var rect = CGRect(x: contentPoint.x - w / 2,
                                   y: contentPoint.y - h / 2,
                                   width: w, height: h)
+                // clamp 进内容边界，避免 rect 越界时 UIScrollView 把 contentOffset
+                // 错夹到边缘（「点中间却放大到别处」的根因）。
+                let contentSize = scroll.contentSize
+                rect.origin.x = min(max(rect.origin.x, 0), max(0, contentSize.width - w))
+                rect.origin.y = min(max(rect.origin.y, 0), max(0, contentSize.height - h))
                 scroll.zoom(to: rect, animated: true)
             } else {
                 scroll.setZoomScale(target, animated: true)
