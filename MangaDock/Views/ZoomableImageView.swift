@@ -34,8 +34,11 @@ struct ZoomableImageView: UIViewRepresentable {
         scroll.backgroundColor = .black
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.delaysContentTouches = false
-        // 1x 时不跟外层 TabView 抢横向拖动
-        scroll.panGestureRecognizer.delegate = context.coordinator
+        // 1x 时不让 UIScrollView 接管拖动，横向手势留给外层 TabView 翻页。
+        // 只关 pan 手势：isScrollEnabled=false 会连 pinch 缩放一起废掉；
+        // 覆盖 panGestureRecognizer.delegate 会被 UIKit 内部依赖搞崩。
+        // 禁用手势不是改 delegate，UIKit 内部关系不受影响。
+        scroll.panGestureRecognizer.isEnabled = false
 
         let single = UITapGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleSingleTap(_:)))
@@ -68,7 +71,8 @@ struct ZoomableImageView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    @MainActor
+    final class Coordinator: NSObject, UIScrollViewDelegate {
         var imageView: UIImageView?
         weak var scrollView: UIScrollView?
         var onTap: (() -> Void)?
@@ -99,6 +103,7 @@ struct ZoomableImageView: UIViewRepresentable {
             let current = scroll?.zoomScale ?? 1
             let target: CGFloat = current > 1.05 ? 1 : 2.5
             scroll?.setZoomScale(target, animated: true)
+            scroll?.panGestureRecognizer.isEnabled = target > 1.01
             onDoubleTap?(target)
         }
 
@@ -135,11 +140,8 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             centerContent(in: scrollView)
-        }
-
-        /// 没放大时 UIScrollView 不开始拖动，把横向手势让给外层翻页。
-        func scrollViewShouldBeginDragging(_ scrollView: UIScrollView) -> Bool {
-            scrollView.zoomScale > 1.01
+            // 放大后才允许拖动看细节；1x 时把拖动让给翻页
+            scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
         }
 
         func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView, atScale scale: CGFloat) {
@@ -147,14 +149,10 @@ struct ZoomableImageView: UIViewRepresentable {
             pendingSingleTap = nil
         }
 
-        // MARK: UIGestureRecognizerDelegate
-
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer === scrollView?.panGestureRecognizer {
-                return (scrollView?.zoomScale ?? 1) > 1.01
-            }
-            return true
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView, atScale scale: CGFloat) {
+            scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
         }
+
     }
 }
 

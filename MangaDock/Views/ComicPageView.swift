@@ -42,7 +42,7 @@ struct ComicPageView: View {
                 showZoomSheet = true
             }
         )
-        .sheet(isPresented: $showZoomSheet) {
+        .fullScreenCover(isPresented: $showZoomSheet) {
             if let image {
                 PageZoomSheet(image: image)
             }
