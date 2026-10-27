@@ -167,7 +167,7 @@ struct ReaderView: View {
                                   onDoubleTap: toggleWebtoonZoom,
                                   stableHeight: true,
                                   pageWidth: pageWidth,
-                                  zoomRatio: $webtoonZoomRatio)
+                                  zoomRatio: webtoonZoomRatio)
                         .id(position)
                         .frame(maxWidth: .infinity)
                 }

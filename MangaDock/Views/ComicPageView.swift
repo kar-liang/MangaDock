@@ -13,9 +13,9 @@ struct ComicPageView: View {
     var stableHeight: Bool = false
     /// 条漫模式可用宽度，用来算这一页的原始高度（宽度 ÷ 高宽比）。
     var pageWidth: CGFloat = 0
-    /// 条漫「整章缩放」：全局缩放倍数（1 = 原尺寸），所有页共享。分页模式用
-    /// 不上，给默认值 .constant(1) 即可。
-    @Binding var zoomRatio: CGFloat = .constant(1)
+    /// 条漫「整章缩放」倍数（1 = 原尺寸），由 ReaderView 单向传入。分页模式
+    /// 用不上，默认 1。
+    var zoomRatio: CGFloat = 1
 
     @State private var image: UIImage?
     @State private var failed = false
