@@ -4,7 +4,7 @@ import UIKit
 /// 条漫模式的整章缩放视图。
 ///
 /// 把整个章节当成「一张超长图」来缩放：所有页面垂直拼成一个 contentView，
-/// 用 UIScrollView 的原生 zoomScale 做整章缩放——捏合、拖动、边界回弹、
+/// 用 UIScrollView 的原生 zoomScale 做整章缩放——捏合、双击、拖动、边界回弹、
 /// 滚动锚点全部是系统原生行为，跟相册看单张图一模一样。
 ///
 /// 关键点：
@@ -48,7 +48,7 @@ struct WebtoonReaderView: UIViewRepresentable {
         context.coordinator.contentView = content
         context.coordinator.scrollView = scroll
 
-        // 单击：切换工具栏显隐。双击已删除（双指缩放够用）。
+        // 单击：切换工具栏显隐（双击已删除）。
         let single = UITapGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleSingleTap(_:)))
         single.numberOfTapsRequired = 1

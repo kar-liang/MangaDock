@@ -6,18 +6,21 @@ import UIKit
 /// 用 UIScrollView 装 UIImageView，而不是拿 MagnifyGesture 手搓 —— 系统自带
 /// 捏合缩放、边界回弹、松手回弹、缩放后拖动，手感和边界处理都是现成的。
 ///
-/// 手势职责（分页模式）：
-/// 1. **双指缩放**：UIScrollView 原生 pinch，本视图唯一处理的手势。
-/// 2. **单击翻页**：由外层 PagePager 的 tap 手势处理，本视图不挂 tap。
-/// 3. **翻页滑动**：外层 UIPageViewController，1x 时本视图禁用 pan 让位。
-/// 双击缩放已删除（双指缩放已够用，且跨层双击手势冲突修不干净）。
+/// 手势冲突处理（分页模式）：
+/// 1. **翻页**：外层是 UIPageViewController，1x 时 UIScrollView 不能抢横向
+///    拖动，否则左右滑动翻页就没了。所以 zoomScale == 1 时让 pan 手势失败。
+/// 2. **单击/双击**：双击放大、单击翻页，判定放在 UIKit 侧统一做 —— 单击
+///    延迟 250ms 等双击，否则 SwiftUI 同时挂 onTapGesture(count:2) 和
+///    onTapGesture 时单击会被系统拖到 300ms 之后才响应。
 struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
+    /// 单击（延迟判定后触发）。分页模式传 nil（单击翻页由 PagePager 处理）。
+    var onTap: (() -> Void)?
     /// 缩放状态变化（放大 = true），供外层 ReaderView 决定是否禁用左右翻页。
     var onZoomChanged: ((Bool) -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onZoomChanged: onZoomChanged)
+        Coordinator(onTap: onTap, onZoomChanged: onZoomChanged)
     }
 
     func makeUIView(context: Context) -> UIScrollView {
@@ -36,6 +39,11 @@ struct ZoomableImageView: UIViewRepresentable {
         // panGestureRecognizer.delegate（会触发 UIKit 内部断言闪退），
         // 而是直接禁用 pan（fit 时一页一屏本就不需要拖动，翻页由外层处理）。
         scroll.panGestureRecognizer.isEnabled = false
+
+        let single = UITapGestureRecognizer(target: context.coordinator,
+                                            action: #selector(Coordinator.handleSingleTap(_:)))
+        single.numberOfTapsRequired = 1
+        scroll.addGestureRecognizer(single)
 
         let imageView = UIImageView(image: image)
         // 用默认 contentMode（scaleToFill）：frame 直接 = 图片尺寸，1:1 对应，
@@ -63,10 +71,25 @@ struct ZoomableImageView: UIViewRepresentable {
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var imageView: UIImageView?
         weak var scrollView: UIScrollView?
+        var onTap: (() -> Void)?
         var onZoomChanged: ((Bool) -> Void)?
 
-        init(onZoomChanged: ((Bool) -> Void)?) {
+        private var pendingSingleTap: Task<Void, Never>?
+
+        init(onTap: (() -> Void)?, onZoomChanged: ((Bool) -> Void)?) {
+            self.onTap = onTap
             self.onZoomChanged = onZoomChanged
+        }
+
+        // MARK: Tap
+
+        @objc func handleSingleTap(_ recognizer: UITapGestureRecognizer) {
+            pendingSingleTap?.cancel()
+            pendingSingleTap = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard !Task.isCancelled else { return }
+                self?.onTap?()
+            }
         }
 
         // MARK: Layout

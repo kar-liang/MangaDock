@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 分页模式下的单页渲染：UIScrollView 原生双指缩放。单击翻页由外层
-/// PagePager 的 tap 手势处理，双击已删除。条漫模式已改用 WebtoonReaderView，
+/// 分页模式下的单页渲染：UIScrollView 原生缩放 + 单击翻页（翻页手势由
+/// PagePager 的 UIKit 手势统一处理）。条漫模式已改用 WebtoonReaderView，
 /// 本视图不再承担条漫渲染职责。
 struct ComicPageView: View {
     @ObservedObject var model: ReaderModel
@@ -38,7 +38,7 @@ struct ComicPageView: View {
     @ViewBuilder
     private var pageContent: some View {
         if let image {
-            ZoomableImageView(image: image, onZoomChanged: onZoomChanged)
+            ZoomableImageView(image: image, onTap: nil, onZoomChanged: onZoomChanged)
         } else if failed {
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")

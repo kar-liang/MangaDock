@@ -8,12 +8,10 @@ protocol PagerPage: AnyObject {
 /// UIPageViewController wrapper. SwiftUI's TabView(.page) keeps every page view
 /// alive, which blows up memory on a 200-page chapter — this only holds ~3.
 ///
-/// 手势职责划分：
-/// - 单击翻页 → 本层的 tap 手势（判断左/中/右）
-/// - 双指缩放 → 每页 ZoomableImageView 的 UIScrollView 原生 pinch
-/// - 滑动翻页 → UIPageViewController 自身
-/// 双击已删除。tap 的 delegate 让 tap 与翻页 pan、页内 pinch 同时识别，
-/// 这是双指缩放不被翻页手势抢走的关键，不能删。
+/// Taps are handled by a UITapGestureRecognizer that recognises *simultaneously*
+/// with the pager's pan gesture. Doing it with a SwiftUI overlay instead would
+/// swallow the swipe: the overlay becomes the hit-test target and the paging
+/// scroll view underneath never sees the drag.
 struct PagePager: UIViewControllerRepresentable {
     @ObservedObject var model: ReaderModel
     @Binding var index: Int
@@ -67,7 +65,6 @@ struct PagePager: UIViewControllerRepresentable {
                                       direction: .forward,
                                       animated: false)
     }
-
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate,
                               UIGestureRecognizerDelegate {
         var parent: PagePager
@@ -97,7 +94,8 @@ struct PagePager: UIViewControllerRepresentable {
             let x = gesture.location(in: view).x
             let width = view.bounds.width
             if x < width * 0.33 {
-                // 放大状态下左右点击不翻页（避免缩放被翻页抵消）。
+                // 放大状态下左右点击不翻页（避免缩放被翻页抵消），
+                // 只有 fit 状态才响应左右翻页。
                 guard !parent.isPageZoomed else { return }
                 parent.onTapLeft()
             } else if x > width * 0.67 {
