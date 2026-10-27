@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// 只在没放大时裁剪。放大后要允许内容溢出到容器外面。
+private struct ClipUnlessZoomed: ViewModifier {
+    let zoomed: Bool
+
+    func body(content: Content) -> some View {
+        if zoomed {
+            content
+        } else {
+            content.clipped()
+        }
+    }
+}
+
 struct ComicPageView: View {
     @ObservedObject var model: ReaderModel
     let index: Int
@@ -51,8 +64,10 @@ struct ComicPageView: View {
                             .scaleEffect(scale, anchor: .top)
                             .offset(zoomOffset)
                     }
-                    // 放大后不能裁 —— 否则放大的部分会被切掉
-                    .clipped(scale <= 1.01)
+                    // 放大后不能裁 —— 否则放大的部分会被切掉。
+                    // SwiftUI 没有 clipped(Bool) 这个重载（只有 clipped(antialiased:)），
+                    // 条件裁剪得自己包一层。
+                    .modifier(ClipUnlessZoomed(zoomed: scale > 1.01))
                     // 放大的那一页要盖在相邻页上面
                     .zIndex(scale > 1.01 ? 1 : 0)
             } else {
