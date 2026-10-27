@@ -140,18 +140,18 @@ struct ZoomableImageView: UIViewRepresentable {
             imageView
         }
 
+        /// 缩放过程中的统一处理点。
+        ///
+        /// 之前把逻辑拆到 scrollViewWillBeginZooming / scrollViewDidEndZooming 里，
+        /// 但这两个可选方法在 Swift 里的实现签名和 SDK 声明对不上
+        /// （error: parameter of 'scrollViewDidEndZooming' has different
+        /// optionality than required by protocol），编译直接失败。
+        /// didZoom 在整个缩放过程中（含开始和结束）都会回调，够用了。
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            centerContent(in: scrollView)
-            // 放大后才允许拖动看细节；1x 时把拖动让给翻页
-            scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
-        }
-
-        func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView, atScale scale: CGFloat) {
             pendingSingleTap?.cancel()
             pendingSingleTap = nil
-        }
-
-        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView, atScale scale: CGFloat) {
+            centerContent(in: scrollView)
+            // 放大后才允许拖动看细节；1x 时把拖动让给翻页
             scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
         }
 
