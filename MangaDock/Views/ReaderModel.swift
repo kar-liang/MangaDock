@@ -124,6 +124,7 @@ final class ReaderModel: ObservableObject {
         do {
             let prepared = try await prepare(item: currentItem, client: client)
             adopt(item: currentItem, source: prepared, startPage: startPage)
+            await warmVisiblePages()
             isLoading = false
         } catch {
             errorMessage = Self.message(for: error)
@@ -142,6 +143,7 @@ final class ReaderModel: ObservableObject {
         do {
             let prepared = try await prepareLocal(item: currentItem)
             adopt(item: currentItem, source: prepared, startPage: startPage)
+            await warmVisiblePages()
             isLoading = false
         } catch {
             errorMessage = Self.message(for: error)
@@ -321,6 +323,19 @@ final class ReaderModel: ObservableObject {
                                         default: ImageEnhancer.aiScale.rawValue)
     }
 
+    /// 解码当前屏可见的图片，加载圈期间显示进度，图片进 imageCache。
+    /// 之后 content 显示时直接从缓存取，不再黑屏等待解码。
+    /// 分页可见 1 页、条漫视口约 2-3 页，统一解码前 3 页覆盖两种情况。
+    private func warmVisiblePages() async {
+        guard pageCount > 0 else { return }
+        let end = min(pageCount, index + 3)
+        for position in index..<end {
+            if Task.isCancelled { return }
+            statusText = "正在加载第 \(position + 1) / \(pageCount) 页"
+            _ = await preparePage(position)
+        }
+    }
+
     // MARK: - Chapter switching
 
     /// Pre-loaded next chapter, keyed by its series index.
@@ -383,6 +398,7 @@ final class ReaderModel: ObservableObject {
             let prepared = try await prepare(item: item, client: client)
             adopt(item: item, source: prepared, startPage: startPage)
             seriesIndex = target
+            await warmVisiblePages()
             isLoading = false
             diag("reader", "jump to=\(item.name) startPage=\(startPage)")
             return true
@@ -414,6 +430,7 @@ final class ReaderModel: ObservableObject {
             let prepared = try await prepare(item: series[target], client: client)
             adopt(item: series[target], source: prepared, startPage: 0)
             seriesIndex = target
+            await warmVisiblePages()
             isLoading = false
             return true
         } catch {
