@@ -14,15 +14,14 @@ import UIKit
 ///    onTapGesture 时单击会被系统拖到 300ms 之后才响应。
 struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
-    /// 单击（延迟判定后触发）
-    var onTap: (() -> Void)?
+    /// 单击（延迟 250ms 等双击判定后触发），传 x 比例（0~1）。
+    /// 放大状态下会固定传 0.5，让外层只唤出工具栏、不翻页。
+    var onTap: ((CGFloat) -> Void)?
     /// 双击 —— 默认在「fit」与「2.5×fit」之间切换
     var onDoubleTap: ((CGFloat) -> Void)?
-    /// 缩放状态变化（放大 = true），供外层 ReaderView 决定是否禁用左右翻页。
-    var onZoomChanged: ((Bool) -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap, onDoubleTap: onDoubleTap, onZoomChanged: onZoomChanged)
+        Coordinator(onTap: onTap, onDoubleTap: onDoubleTap)
     }
 
     func makeUIView(context: Context) -> UIScrollView {
@@ -79,27 +78,32 @@ struct ZoomableImageView: UIViewRepresentable {
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var imageView: UIImageView?
         weak var scrollView: UIScrollView?
-        var onTap: (() -> Void)?
+        var onTap: ((CGFloat) -> Void)?
         var onDoubleTap: ((CGFloat) -> Void)?
-        var onZoomChanged: ((Bool) -> Void)?
 
         private var pendingSingleTap: Task<Void, Never>?
 
-        init(onTap: (() -> Void)?, onDoubleTap: ((CGFloat) -> Void)?,
-             onZoomChanged: ((Bool) -> Void)?) {
+        init(onTap: ((CGFloat) -> Void)?, onDoubleTap: ((CGFloat) -> Void)?) {
             self.onTap = onTap
             self.onDoubleTap = onDoubleTap
-            self.onZoomChanged = onZoomChanged
         }
 
         // MARK: Tap
 
         @objc func handleSingleTap(_ recognizer: UITapGestureRecognizer) {
+            // 立即取点击位置（手势识别时位置才准，延迟后 recognizer 可能已 reset）。
+            guard let view = recognizer.view, view.bounds.width > 0 else { return }
+            let x = recognizer.location(in: view).x / view.bounds.width
             pendingSingleTap?.cancel()
             pendingSingleTap = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 250_000_000)
-                guard !Task.isCancelled else { return }
-                self?.onTap?()
+                guard !Task.isCancelled, let self, let scroll = self.scrollView else { return }
+                if scroll.zoomScale > scroll.minimumZoomScale * 1.01 {
+                    // 放大状态：单击只唤出工具栏，不翻页（避免缩放被翻页抵消）。
+                    self.onTap?(0.5)
+                } else {
+                    self.onTap?(x)
+                }
             }
         }
 
@@ -212,7 +216,6 @@ struct ZoomableImageView: UIViewRepresentable {
             // 放大后启用 pan（拖动看局部），fit 时禁用（让位外层翻页）。
             let zoomed = scrollView.zoomScale > scrollView.minimumZoomScale * 1.01
             scrollView.panGestureRecognizer.isEnabled = zoomed
-            onZoomChanged?(zoomed)
         }
 
         /// fit 时 UIScrollView 不开始拖动，把横向手势让给外层翻页。

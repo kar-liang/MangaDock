@@ -8,10 +8,9 @@ protocol PagerPage: AnyObject {
 /// UIPageViewController wrapper. SwiftUI's TabView(.page) keeps every page view
 /// alive, which blows up memory on a 200-page chapter — this only holds ~3.
 ///
-/// Taps are handled by a UITapGestureRecognizer that recognises *simultaneously*
-/// with the pager's pan gesture. Doing it with a SwiftUI overlay instead would
-/// swallow the swipe: the overlay becomes the hit-test target and the paging
-/// scroll view underneath never sees the drag.
+/// 本 wrapper 只负责滑动翻页。单击/双击/缩放全部由每页的 ZoomableImageView 在
+/// 内部统一处理（单层手势，require(toFail:) 天然可靠），这里不再挂任何 tap 手势，
+/// 避免跨层手势冲突（历史上双击放大和单击翻页分属两层，冲突修不完）。
 struct PagePager: UIViewControllerRepresentable {
     @ObservedObject var model: ReaderModel
     @Binding var index: Int
@@ -19,10 +18,6 @@ struct PagePager: UIViewControllerRepresentable {
     var onTapLeft: () -> Void = {}
     var onTapCenter: () -> Void = {}
     var onTapRight: () -> Void = {}
-    /// 缩放状态变化（放大 = true），上报给 ReaderView。
-    var onZoomChanged: ((Bool) -> Void)? = nil
-    /// 当前页是否处于放大状态（由 ReaderView 回传），放大时左右点击不翻页。
-    var isPageZoomed: Bool = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -37,22 +32,6 @@ struct PagePager: UIViewControllerRepresentable {
         controller.dataSource = context.coordinator
         controller.delegate = context.coordinator
         controller.view.backgroundColor = .black
-
-        let tap = UITapGestureRecognizer(target: context.coordinator,
-                                         action: #selector(Coordinator.handleTap(_:)))
-        tap.delegate = context.coordinator
-        tap.cancelsTouchesInView = false
-        tap.requiresExclusiveTouchType = false
-        controller.view.addGestureRecognizer(tap)
-
-        // 双击识别器：只用来「吃掉」双击，让单击翻页手势在双击时失败，
-        // 否则双击放大（由每页 ZoomableImageView 处理）会同时触发第一下的翻页。
-        let doubleTap = UITapGestureRecognizer(target: context.coordinator,
-                                               action: #selector(Coordinator.ignoreDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        doubleTap.delegate = context.coordinator
-        controller.view.addGestureRecognizer(doubleTap)
-        tap.require(toFail: doubleTap)
 
         if model.displayPageCount > 0 {
             controller.setViewControllers([context.coordinator.controller(for: index)],
@@ -74,8 +53,7 @@ struct PagePager: UIViewControllerRepresentable {
                                       direction: .forward,
                                       animated: false)
     }
-    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate,
-                              UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
         var parent: PagePager
         var isAnimating = false
 
@@ -85,50 +63,31 @@ struct PagePager: UIViewControllerRepresentable {
 
         func controller(for position: Int) -> UIViewController {
             if position < parent.model.pageCount {
-                let host = ComicPageHost(rootView: ComicPageView(model: parent.model,
-                                                                 index: position,
-                                                                 onZoomChanged: parent.onZoomChanged))
+                // 捕获三个回调（值拷贝），避免闭包捕获 self（Coordinator）造成循环引用。
+                let onTapLeft = parent.onTapLeft
+                let onTapCenter = parent.onTapCenter
+                let onTapRight = parent.onTapRight
+                let host = ComicPageHost(rootView: ComicPageView(
+                    model: parent.model,
+                    index: position,
+                    onTap: { x in
+                        // x 是点击位置在屏宽的比例。放大状态下 ZoomableImageView 会
+                        // 固定传 0.5（走中间分支，只唤出工具栏），fit 状态按位置翻页。
+                        if x < 0.33 {
+                            onTapLeft()
+                        } else if x > 0.67 {
+                            onTapRight()
+                        } else {
+                            onTapCenter()
+                        }
+                    }
+                ))
                 host.pageIndex = position
                 return host
             }
             let host = ChapterEndHost(rootView: ChapterEndView(model: parent.model))
             host.pageIndex = position
             return host
-        }
-
-        // MARK: Taps
-
-        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
-            guard let view = gesture.view, view.bounds.width > 0 else { return }
-            let x = gesture.location(in: view).x
-            let width = view.bounds.width
-            if x < width * 0.33 {
-                // 放大状态下左右点击不翻页（避免缩放被翻页抵消），
-                // 只有 fit 状态才响应左右翻页。
-                guard !parent.isPageZoomed else { return }
-                parent.onTapLeft()
-            } else if x > width * 0.67 {
-                guard !parent.isPageZoomed else { return }
-                parent.onTapRight()
-            } else {
-                parent.onTapCenter()
-            }
-        }
-
-        /// 双击的空实现：只负责让单击翻页在双击时失败，实际缩放由每页处理。
-        @objc func ignoreDoubleTap(_ gesture: UITapGestureRecognizer) {}
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 单击 vs 双击手势不能同时识别：否则 tap.require(toFail: doubleTap) 失效，
-            // 双击时第一下的单击（左右翻页/中间 toggleBars）也会触发。
-            // 其余组合（单击 vs 翻页滑动 pan、双击 vs 页内双击）保持同时识别。
-            if let a = gestureRecognizer as? UITapGestureRecognizer,
-               let b = otherGestureRecognizer as? UITapGestureRecognizer,
-               a.numberOfTapsRequired != b.numberOfTapsRequired {
-                return false
-            }
-            return true
         }
 
         // MARK: Paging
