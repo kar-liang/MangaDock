@@ -6,22 +6,18 @@ import UIKit
 /// 用 UIScrollView 装 UIImageView，而不是拿 MagnifyGesture 手搓 —— 系统自带
 /// 捏合缩放、边界回弹、松手回弹、缩放后拖动，手感和边界处理都是现成的。
 ///
-/// 手势冲突处理（分页模式）：
-/// 1. **翻页**：外层是 UIPageViewController，1x 时 UIScrollView 不能抢横向
-///    拖动，否则左右滑动翻页就没了。所以 zoomScale == 1 时让 pan 手势失败。
-/// 2. **单击/双击**：双击放大、单击翻页，判定放在 UIKit 侧统一做 —— 单击
-///    延迟 250ms 等双击，否则 SwiftUI 同时挂 onTapGesture(count:2) 和
-///    onTapGesture 时单击会被系统拖到 300ms 之后才响应。
+/// 手势职责（分页模式）：
+/// 1. **双指缩放**：UIScrollView 原生 pinch，本视图唯一处理的手势。
+/// 2. **单击翻页**：由外层 PagePager 的 tap 手势处理，本视图不挂 tap。
+/// 3. **翻页滑动**：外层 UIPageViewController，1x 时本视图禁用 pan 让位。
+/// 双击缩放已删除（双指缩放已够用，且跨层双击手势冲突修不干净）。
 struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
-    /// 单击（延迟 250ms 等双击判定后触发），传 x 比例（0~1）。
-    /// 放大状态下会固定传 0.5，让外层只唤出工具栏、不翻页。
-    var onTap: ((CGFloat) -> Void)?
-    /// 双击 —— 默认在「fit」与「2.5×fit」之间切换
-    var onDoubleTap: ((CGFloat) -> Void)?
+    /// 缩放状态变化（放大 = true），供外层 ReaderView 决定是否禁用左右翻页。
+    var onZoomChanged: ((Bool) -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap, onDoubleTap: onDoubleTap)
+        Coordinator(onZoomChanged: onZoomChanged)
     }
 
     func makeUIView(context: Context) -> UIScrollView {
@@ -40,17 +36,6 @@ struct ZoomableImageView: UIViewRepresentable {
         // panGestureRecognizer.delegate（会触发 UIKit 内部断言闪退），
         // 而是直接禁用 pan（fit 时一页一屏本就不需要拖动，翻页由外层处理）。
         scroll.panGestureRecognizer.isEnabled = false
-
-        let single = UITapGestureRecognizer(target: context.coordinator,
-                                            action: #selector(Coordinator.handleSingleTap(_:)))
-        single.numberOfTapsRequired = 1
-        scroll.addGestureRecognizer(single)
-
-        let double = UITapGestureRecognizer(target: context.coordinator,
-                                            action: #selector(Coordinator.handleDoubleTap(_:)))
-        double.numberOfTapsRequired = 2
-        scroll.addGestureRecognizer(double)
-        single.require(toFail: double)
 
         let imageView = UIImageView(image: image)
         // 用默认 contentMode（scaleToFill）：frame 直接 = 图片尺寸，1:1 对应，
@@ -78,64 +63,10 @@ struct ZoomableImageView: UIViewRepresentable {
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var imageView: UIImageView?
         weak var scrollView: UIScrollView?
-        var onTap: ((CGFloat) -> Void)?
-        var onDoubleTap: ((CGFloat) -> Void)?
+        var onZoomChanged: ((Bool) -> Void)?
 
-        private var pendingSingleTap: Task<Void, Never>?
-
-        init(onTap: ((CGFloat) -> Void)?, onDoubleTap: ((CGFloat) -> Void)?) {
-            self.onTap = onTap
-            self.onDoubleTap = onDoubleTap
-        }
-
-        // MARK: Tap
-
-        @objc func handleSingleTap(_ recognizer: UITapGestureRecognizer) {
-            // 立即取点击位置（手势识别时位置才准，延迟后 recognizer 可能已 reset）。
-            guard let view = recognizer.view, view.bounds.width > 0 else { return }
-            let x = recognizer.location(in: view).x / view.bounds.width
-            pendingSingleTap?.cancel()
-            pendingSingleTap = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                guard !Task.isCancelled, let self, let scroll = self.scrollView else { return }
-                if scroll.zoomScale > scroll.minimumZoomScale * 1.01 {
-                    // 放大状态：单击只唤出工具栏，不翻页（避免缩放被翻页抵消）。
-                    self.onTap?(0.5)
-                } else {
-                    self.onTap?(x)
-                }
-            }
-        }
-
-        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-            pendingSingleTap?.cancel()
-            pendingSingleTap = nil
-            guard let scroll = scrollView else { return }
-            let minScale = scroll.minimumZoomScale
-            let current = scroll.zoomScale
-            // 双击在「fit（正常）」与「2.5×fit」之间切换
-            let target: CGFloat = current > minScale * 1.05 ? minScale : minScale * 2.5
-
-            if target > minScale * 1.05 {
-                // 放大：以点击位置为锚点（双击哪里放大哪里），跟相册一样。
-                let point = recognizer.location(in: scroll)
-                // 点击点在 contentView 坐标系里的位置
-                let contentPoint = scroll.convert(point, to: scroll.subviews.first)
-                let w = scroll.bounds.width / target
-                let h = scroll.bounds.height / target
-                var rect = CGRect(x: contentPoint.x - w / 2,
-                                  y: contentPoint.y - h / 2,
-                                  width: w, height: h)
-                // clamp 进内容边界，避免 rect 越界时 UIScrollView 把 contentOffset
-                // 错夹到边缘（「点中间却放大到别处」的根因）。
-                let contentSize = scroll.contentSize
-                rect.origin.x = min(max(rect.origin.x, 0), max(0, contentSize.width - w))
-                rect.origin.y = min(max(rect.origin.y, 0), max(0, contentSize.height - h))
-                scroll.zoom(to: rect, animated: true)
-            } else {
-                scroll.setZoomScale(target, animated: true)
-            }
-            onDoubleTap?(target)
+        init(onZoomChanged: ((Bool) -> Void)?) {
+            self.onZoomChanged = onZoomChanged
         }
 
         // MARK: Layout
@@ -216,6 +147,7 @@ struct ZoomableImageView: UIViewRepresentable {
             // 放大后启用 pan（拖动看局部），fit 时禁用（让位外层翻页）。
             let zoomed = scrollView.zoomScale > scrollView.minimumZoomScale * 1.01
             scrollView.panGestureRecognizer.isEnabled = zoomed
+            onZoomChanged?(zoomed)
         }
 
         /// fit 时 UIScrollView 不开始拖动，把横向手势让给外层翻页。

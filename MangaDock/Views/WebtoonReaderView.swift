@@ -4,7 +4,7 @@ import UIKit
 /// 条漫模式的整章缩放视图。
 ///
 /// 把整个章节当成「一张超长图」来缩放：所有页面垂直拼成一个 contentView，
-/// 用 UIScrollView 的原生 zoomScale 做整章缩放——捏合、双击、拖动、边界回弹、
+/// 用 UIScrollView 的原生 zoomScale 做整章缩放——捏合、拖动、边界回弹、
 /// 滚动锚点全部是系统原生行为，跟相册看单张图一模一样。
 ///
 /// 关键点：
@@ -48,17 +48,11 @@ struct WebtoonReaderView: UIViewRepresentable {
         context.coordinator.contentView = content
         context.coordinator.scrollView = scroll
 
-        // 单击 / 双击：UIKit 侧统一判定（单击延迟等双击），避免 SwiftUI 手势延迟。
+        // 单击：切换工具栏显隐。双击已删除（双指缩放够用）。
         let single = UITapGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleSingleTap(_:)))
         single.numberOfTapsRequired = 1
         scroll.addGestureRecognizer(single)
-
-        let double = UITapGestureRecognizer(target: context.coordinator,
-                                            action: #selector(Coordinator.handleDoubleTap(_:)))
-        double.numberOfTapsRequired = 2
-        scroll.addGestureRecognizer(double)
-        single.require(toFail: double)
 
         context.coordinator.buildPages(in: scroll)
         return scroll
@@ -99,8 +93,6 @@ struct WebtoonReaderView: UIViewRepresentable {
         private var loadedPages: Set<Int> = []
         /// 正在加载的页任务，避免重复加载。
         private var loadingTasks: [Int: Task<Void, Never>] = [:]
-
-        private var pendingSingleTap: Task<Void, Never>?
 
         init(parent: WebtoonReaderView) {
             self.parent = parent
@@ -233,43 +225,8 @@ struct WebtoonReaderView: UIViewRepresentable {
         // MARK: - Tap
 
         @objc func handleSingleTap(_ recognizer: UITapGestureRecognizer) {
-            pendingSingleTap?.cancel()
-            pendingSingleTap = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                guard !Task.isCancelled else { return }
-                self?.parent.onTap?()
-            }
-        }
-
-        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-            pendingSingleTap?.cancel()
-            pendingSingleTap = nil
-            // 双击在 1x 与 2x 之间切换（整章一起缩放，跟单张图一样）。
-            guard let scrollView else { return }
-            let target: CGFloat = scrollView.zoomScale > 1.05 ? 1 : 2
-            if target > 1.05 {
-                // 放大：以点击位置为锚点（双击哪里放大哪里），跟相册一致。
-                let pointInView = recognizer.location(in: scrollView)
-                // 手动换算到 content 坐标（比 convert(to:) 稳，不受 zoomScale 历史影响）。
-                let contentPoint = CGPoint(
-                    x: (pointInView.x + scrollView.contentOffset.x) / scrollView.zoomScale,
-                    y: (pointInView.y + scrollView.contentOffset.y) / scrollView.zoomScale
-                )
-                let w = scrollView.bounds.width / target
-                let h = scrollView.bounds.height / target
-                var rect = CGRect(x: contentPoint.x - w / 2,
-                                  y: contentPoint.y - h / 2,
-                                  width: w, height: h)
-                // 关键：rect 必须 clamp 进内容边界。条漫 contentView 宽度 = 屏宽，
-                // 点右半边时 rect 会越出右边界，UIScrollView 会把 contentOffset
-                // 错夹回左边（「点右半边却放大左半边」的根因）。
-                let contentSize = scrollView.contentSize
-                rect.origin.x = min(max(rect.origin.x, 0), max(0, contentSize.width - w))
-                rect.origin.y = min(max(rect.origin.y, 0), max(0, contentSize.height - h))
-                scrollView.zoom(to: rect, animated: true)
-            } else {
-                scrollView.setZoomScale(target, animated: true)
-            }
+            // 单击立即触发（双击已删除，无需延迟等双击判定）。
+            parent.onTap?()
         }
 
         // MARK: - UIScrollViewDelegate

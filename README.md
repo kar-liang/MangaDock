@@ -194,4 +194,5 @@ ZIP 解析是自己写的（`Core/ZipArchive.swift`），只依赖系统 `Compre
 | 2.0.14 | 修条漫 safe area 上下黑边（verticalReader 加 ignoresSafeArea）+ 条漫双击锚点 clamp 进边界（点右半边不再放大左半边） |
 | 2.0.15 | 修分页模式双击中间误触发工具栏切换：单击 vs 双击手势不同时识别，让 require(toFail:) 生效；分页双击补 clamp |
 | 2.0.16 | 分页手势彻底重构：单击/双击统一收进 ZoomableImageView 单层（删除 PagePager 的 tap 手势和跨层胶水），消除手势冲突 |
+| 2.0.17 | 删除双击缩放（双指缩放够用）；修复双指缩放：恢复 PagePager 层 tap 手势协调，避免翻页手势抢 pinch |
 
