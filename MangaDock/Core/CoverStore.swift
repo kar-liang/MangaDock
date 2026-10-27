@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import Combine
 
 extension Notification.Name {
     /// Posted when a user-chosen cover is added, removed or pulled from sync,
@@ -79,8 +80,12 @@ enum CoverBuilder {
 }
 
 @MainActor
-final class CoverStore {
+final class CoverStore: ObservableObject {
     static let shared = CoverStore()
+
+    /// 正在加载的封面数。RootView 用它判断「书架封面是否都加载完」，
+    /// 归零前启动加载圈一直挂着，避免封面还是灰块时加载圈就消失。
+    @Published private(set) var pendingLoads = 0
 
     private var images: [String: UIImage] = [:]
     private var inFlight: Set<String> = []
@@ -99,7 +104,11 @@ final class CoverStore {
         guard item.isImage || item.isArchive || item.isDirectory else { return }
 
         inFlight.insert(key)
-        defer { inFlight.remove(key) }
+        pendingLoads += 1
+        defer {
+            inFlight.remove(key)
+            pendingLoads -= 1
+        }
 
         // ① 本地缓存最先 —— 上次存的很可能已经是 Bangumi 封面，
         //    必须先上，否则冷启动时会卡在 Bangumi 的网络请求上（本地明明有图）。
