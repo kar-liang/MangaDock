@@ -28,6 +28,10 @@ struct ReaderView: View {
     @State private var webtoonZoomRatio: CGFloat = 1
     /// 捏合手势开始时的缩放倍数，用于累计（MagnifyGesture 的 magnification 每次从 1 起）。
     @State private var pinchStartRatio: CGFloat = 1
+    /// 捏合时手指中心在视口中的垂直比例（0~1），缩放时用它锚定滚动，稳住画面。
+    @State private var pinchAnchorFraction: CGFloat = 0.5
+    /// 是否正在捏合。捏合时用手指锚点稳住画面，结束后恢复顶部锚点（进度跟踪）。
+    @State private var isPinching = false
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
 
     init(item: WebDAVItem) {
@@ -180,18 +184,23 @@ struct ReaderView: View {
             .scrollTargetLayout()
         }
         .background(Color.black)
-        // 整章缩放：双指捏合调整全局倍数（不影响单指滚动翻页）。
+        // 整章缩放：双指捏合调整全局倍数（不影响单指滚动翻页），并记录手指
+        // 锚点位置，缩放时用它稳住画面，避免「滚走」。
         .simultaneousGesture(
             MagnifyGesture()
                 .onChanged { value in
+                    isPinching = true
+                    // 手指捏合中心在视口中的比例（startAnchor 直接给出，无需手算）。
+                    pinchAnchorFraction = min(max(value.startAnchor.y, 0), 1)
                     let next = min(max(pinchStartRatio * value.magnification, 1), 4)
                     webtoonZoomRatio = next
                 }
                 .onEnded { _ in
                     pinchStartRatio = webtoonZoomRatio
+                    isPinching = false
                 }
         )
-        // 量一次可用宽度，够算每页的原始高度（不做嵌套测量）。
+        // 量一次可用宽度，够算每页原始高度（不做嵌套测量）。
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -203,7 +212,11 @@ struct ReaderView: View {
         // 重合，scrollPosition 认不出换了一章，会把旧页号套到新内容上 ——
         // 表现就是「进下一章还停在中后段」。换 identity 是最干脆的归零方式。
         .id(model.currentItem.url)
-        .scrollPosition(id: $verticalPageID, anchor: .top)
+        // 捏合时用手指锚点稳住画面（缩放不滚走），平时用顶部锚点跟踪阅读进度。
+        .scrollPosition(id: $verticalPageID,
+                        anchor: isPinching
+                            ? UnitPoint(x: 0.5, y: pinchAnchorFraction)
+                            : .top)
         .onAppear {
             diag("webtoon", "appear chapter=\(model.currentItem.displayName) index=\(model.index) pages=\(model.pageCount) vpid=\(verticalPageID.map(String.init) ?? "nil")")
             // Jump to the saved page; id-based positioning needs the ID set once.

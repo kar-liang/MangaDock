@@ -33,8 +33,8 @@ struct ComicPageView: View {
         Group {
             if stableHeight {
                 // 条漫模式「整章一起放大」：占位高度 = 原始高度 × 全局缩放倍数，
-                // 图片同样按倍数放大。放大后整章所有页一起变大，连续滚动看
-                // 放大的内容，不弹层、不局部裁剪。
+                // 图片宽度始终撑满屏、高度按比例撑满占位（不用 scaleEffect 叠加，
+                // 避免从中心放大导致「只剩中间」）。
                 Color.clear
                     .frame(height: baseHeight * zoomRatio)
                     .overlay(alignment: .top) {
@@ -76,12 +76,13 @@ struct ComicPageView: View {
     private var pageContent: some View {
         if let image {
             if stableHeight {
-                // 条漫：整章缩放，图片按全局倍数放大。
+                // 条漫：整章缩放。图片宽度始终撑满屏、高度按比例撑满占位，
+                // 直接改尺寸而不是 scaleEffect，放大后内容完整撑满，不居中留白。
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .scaleEffect(zoomRatio, anchor: .top)
+                    .scaledToFill()
+                    .frame(width: pageWidth, height: baseHeight * zoomRatio)
+                    .clipped()
             } else {
                 // 分页：UIScrollView 原生缩放，单击翻页。
                 ZoomableImageView(image: image, onTap: onTap)
