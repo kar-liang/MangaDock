@@ -35,7 +35,7 @@ final class WebDAVClient: @unchecked Sendable {
     private let session: URLSession
     private let sessionDelegate: WebDAVSessionDelegate
 
-    init(username: String, password: String, baseURL: URL, timeout: TimeInterval = 30) {
+    init(username: String, password: String, baseURL: URL, timeout: TimeInterval = 120) {
         self.username = username
         self.password = password
         self.baseURL = baseURL

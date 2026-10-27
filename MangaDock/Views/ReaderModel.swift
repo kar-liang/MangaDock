@@ -247,12 +247,18 @@ final class ReaderModel: ObservableObject {
             // 想要后续零延迟，用「下载本章」。
             if !cached, item.isArchive,
                let remote = try? await RemoteZipComicSource(url: item.url, client: client) {
-                diag("prepare", "REMOTEZIP \(item.name) pages=\(remote.pageCount)")
-                if !silent {
-                    statusText = ""
-                    downloadProgress = nil
+                // 验证第一页能读。AI 超分大图 CBZ 的 Range 读可能失败
+                // （服务器 Range 限制 / 大 payload 超时），失败就回退整包下载，
+                // 保证能加载，而不是「初始化成功但每页都读不出来」。
+                if remote.pageCount > 0, (try? await remote.pageData(at: 0)) != nil {
+                    diag("prepare", "REMOTEZIP \(item.name) pages=\(remote.pageCount)")
+                    if !silent {
+                        statusText = ""
+                        downloadProgress = nil
+                    }
+                    return remote
                 }
-                return remote
+                diag("prepare", "REMOTEZIP first page failed, fallback to full download: \(item.name)")
             }
 
             if !cached {
