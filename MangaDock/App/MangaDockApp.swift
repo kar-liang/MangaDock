@@ -46,8 +46,9 @@ struct RootView: View {
         .tint(AppTheme(rawValue: themeRaw)?.tint)
         .task {
             await store.probeServers()
-            probed = true
             await store.pullSync()
+            // 探测 + 同步都完成才放行，加载圈留到完全加载成功，避免中途消失无反馈。
+            probed = true
         }
     }
 }
