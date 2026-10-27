@@ -170,12 +170,20 @@ struct ReaderView: View {
             .scrollTargetLayout()
         }
         .background(Color.black)
+        // 换章时整块重建。ForEach 的 id 是 0..<pageCount，新旧章节的 id 完全
+        // 重合，scrollPosition 认不出换了一章，会把旧页号套到新内容上 ——
+        // 表现就是「进下一章还停在中后段」。换 identity 是最干脆的归零方式。
+        .id(model.currentItem.url)
         .scrollPosition(id: $verticalPageID, anchor: .top)
         .onAppear {
+            diag("webtoon", "appear chapter=\(model.currentItem.displayName) index=\(model.index) pages=\(model.pageCount) vpid=\(verticalPageID.map(String.init) ?? "nil")")
             // Jump to the saved page; id-based positioning needs the ID set once.
             if verticalPageID == nil {
                 verticalPageID = model.index
             }
+        }
+        .onChange(of: model.currentItem.url) { _, _ in
+            diag("webtoon", "chapter changed -> \(model.currentItem.displayName) index=\(model.index) pages=\(model.pageCount) vpid=\(verticalPageID.map(String.init) ?? "nil")")
         }
         .onChange(of: verticalPageID) { _, newID in
             guard let page = newID, page != model.index else { return }
@@ -282,15 +290,11 @@ struct ReaderView: View {
         await resetVerticalScroll()
     }
 
-    /// 换章后把条漫的滚动位置挪到新章开头。
-    ///
-    /// `scrollPosition` 的 id 还指着上一章的页序号（比如 15），画面就会停在
-    /// 中后段，看起来像「没从头开始」—— 其实页码早就归零了。
-    /// 必须先置 nil 让它松开，再设成新页码，中间留一帧。
+    /// 换章后松开滚动绑定。真正的归零靠 ScrollView 上的 `.id(item.url)` ——
+    /// 容器重建时 onAppear 会把位置设成新章的 model.index（= 0）。
+    /// 早先在这里手动「置 nil → 等 60ms → 设新值」，时序不稳，实测无效。
     private func resetVerticalScroll() async {
         verticalPageID = nil
-        try? await Task.sleep(nanoseconds: 60_000_000)
-        verticalPageID = model.index
     }
 
     private func goPreviousChapter() async {
