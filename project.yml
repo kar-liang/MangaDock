@@ -39,8 +39,8 @@ targets:
         PRODUCT_NAME: MangaDock
         PRODUCT_BUNDLE_IDENTIFIER: com.karliang.mangadock
         TARGETED_DEVICE_FAMILY: "1,2"
-        MARKETING_VERSION: "2.0.7"
-        CURRENT_PROJECT_VERSION: "84"
+        MARKETING_VERSION: "2.0.8"
+        CURRENT_PROJECT_VERSION: "85"
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: Support/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -50,8 +50,8 @@ targets:
       properties:
         CFBundleDisplayName: 漫画坞
         CFBundleIconName: AppIcon
-        CFBundleShortVersionString: "2.0.7"
-        CFBundleVersion: "84"
+        CFBundleShortVersionString: "2.0.8"
+        CFBundleVersion: "85"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
