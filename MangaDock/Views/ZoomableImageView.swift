@@ -71,7 +71,9 @@ struct ZoomableImageView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    @MainActor
+    // 不要给 Coordinator 加 @MainActor —— UIScrollViewDelegate 的方法是
+    // nonisolated 的，整个类标了会让协议实现签名对不上，编译直接失败
+    // （error: parameter of 'scrollViewDidEndZooming' has different optionality）。
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var imageView: UIImageView?
         weak var scrollView: UIScrollView?
