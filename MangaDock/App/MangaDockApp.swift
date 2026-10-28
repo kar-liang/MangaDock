@@ -34,8 +34,7 @@ struct RootView: View {
                 if probed {
                     RootTabView()
                 } else {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    LaunchSplashView()
                 }
             } else {
                 NavigationStack {
