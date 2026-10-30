@@ -23,7 +23,7 @@ struct ServerSettingsView: View {
     var body: some View {
         Form {
             Section {
-                TextField("每行一个地址，如 http://192.168.2.144:5005/dav/Comics", text: $serverURL, axis: .vertical)
+                TextField("每行一个地址，如 http://192.168.1.10:5005/dav/Comics", text: $serverURL, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
