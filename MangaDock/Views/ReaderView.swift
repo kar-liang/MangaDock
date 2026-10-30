@@ -32,6 +32,12 @@ struct ReaderView: View {
         verticalOverride ?? (defaultReaderMode == ReaderMode.vertical.rawValue)
     }
 
+    /// 分页模式白底（和纸书一样，图片外的留白是白的）；
+    /// 条漫模式保持黑底，连续长图在黑底上不刺眼。
+    private var pageBackground: Color {
+        verticalMode ? .black : .white
+    }
+
     private func toggleVerticalMode() {
         verticalOverride = !verticalMode
     }
@@ -42,7 +48,7 @@ struct ReaderView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            pageBackground.ignoresSafeArea()
             content
 
             if showBars {
@@ -55,9 +61,9 @@ struct ReaderView: View {
                 }
             }
         }
-        // A comic reader stays dark no matter the app theme — glass and text here
-        // must not follow a light color scheme.
-        .environment(\.colorScheme, .dark)
+        // 分页模式用白底（图片外的留白是白的），条漫模式保持黑底。
+        // 颜色方案跟着走：白底要浅色方案，否则状态栏和 .primary 文字都是白的，看不见。
+        .preferredColorScheme(verticalMode ? .dark : .light)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
@@ -120,16 +126,16 @@ struct ReaderView: View {
                     .frame(width: 220)
                 Text("下载中 \(Int(progress * 100))%")
                     .font(.footnote)
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(.primary.opacity(0.8))
             } else {
                 ProgressView()
                 Text(model.statusText)
                     .font(.footnote)
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(.primary.opacity(0.8))
             }
         }
-        .tint(.white)
-        .foregroundColor(.white)
+        .tint(.primary)
+        .foregroundColor(.primary)
     }
 
     private func errorView(_ message: String) -> some View {
@@ -139,10 +145,10 @@ struct ReaderView: View {
                 .foregroundColor(.orange)
             Text("打不开这个文件")
                 .font(.headline)
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
             Text(message)
                 .font(.footnote)
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(.primary.opacity(0.7))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             HStack(spacing: 12) {
@@ -150,7 +156,7 @@ struct ReaderView: View {
                     .buttonStyle(.borderedProminent)
                 Button("返回") { dismiss() }
                     .buttonStyle(.bordered)
-                    .tint(.white)
+                    .tint(.primary)
             }
             .padding(.top, 4)
         }
@@ -271,13 +277,13 @@ struct ReaderView: View {
                         .lineLimit(1)
                     Text(model.errorMessage == nil ? "正在加载…" : "加载失败")
                         .font(.caption2)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(.primary.opacity(0.6))
                 }
 
                 Spacer(minLength: 4)
 
                 if model.errorMessage == nil {
-                    ProgressView().tint(.white)
+                    ProgressView().tint(.primary)
                 }
             }
             .padding(.horizontal, 12)
@@ -320,18 +326,18 @@ struct ReaderView: View {
                             .font(.system(size: 9, weight: .semibold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
-                            .background(Color.white.opacity(0.18), in: Capsule())
+                            .background(Color.primary.opacity(0.12), in: Capsule())
                     }
                     if model.enhance {
                         Text(enhanceBadgeText)
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
                             .background(Color.orange, in: Capsule())
                     }
                 }
-                .foregroundColor(.white.opacity(0.65))
+                .foregroundColor(.primary.opacity(0.65))
             }
 
             Spacer(minLength: 4)
@@ -443,7 +449,7 @@ struct ReaderView: View {
             Image(systemName: name)
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: 44, height: 34)
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -455,7 +461,7 @@ struct ReaderView: View {
             Image(systemName: name)
                 .font(.system(size: 15, weight: .semibold))
                 .frame(width: 40, height: 34)
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

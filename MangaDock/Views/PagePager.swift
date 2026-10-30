@@ -36,7 +36,7 @@ struct PagePager: UIViewControllerRepresentable {
         )
         controller.dataSource = context.coordinator
         controller.delegate = context.coordinator
-        controller.view.backgroundColor = .black
+        controller.view.backgroundColor = .white   // 分页模式白底
 
         let tap = UITapGestureRecognizer(target: context.coordinator,
                                          action: #selector(Coordinator.handleTap(_:)))

@@ -32,7 +32,9 @@ struct ZoomableImageView: UIViewRepresentable {
         scroll.bouncesZoom = true
         scroll.showsHorizontalScrollIndicator = false
         scroll.showsVerticalScrollIndicator = false
-        scroll.backgroundColor = .black
+        // 分页模式是白底，这里必须是白色；黑底会在图片区画出一个黑框。
+        // 覆盖层模式（if blocksParentScroll）另说，那层是全屏的，由调用方决定。
+        scroll.backgroundColor = .white
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.delaysContentTouches = false
         // 1x 时不跟外层 UIPageViewController 抢横向拖动。不要改
