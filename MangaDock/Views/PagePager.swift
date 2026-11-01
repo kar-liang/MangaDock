@@ -82,7 +82,8 @@ struct PagePager: UIViewControllerRepresentable {
                 host.pageIndex = position
                 return host
             }
-            let host = ChapterEndHost(rootView: ChapterEndView(model: parent.model))
+            // 分页模式：滑到结尾页直接进下一话，不用点按钮
+            let host = ChapterEndHost(rootView: ChapterEndView(model: parent.model, autoAdvance: true))
             host.pageIndex = position
             return host
         }

@@ -16,6 +16,15 @@ struct LaunchSplashView: View {
             Text("漫画坞")
                 .font(.title.weight(.bold))
                 .foregroundColor(.primary)
+
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("正在连接服务器…")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))

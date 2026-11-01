@@ -84,6 +84,7 @@ struct ReaderView: View {
             isPageZoomed = false
             saveProgress(page: min(newValue, model.pageCount - 1))
             model.prewarm(from: newValue + 1)
+            model.prewarmPrevious(from: newValue)
             model.preloadNextChapterIfNeeded()
         }
         .onDisappear {
@@ -394,7 +395,7 @@ struct ReaderView: View {
             Image(systemName: name)
                 .font(.system(size: 15, weight: .semibold))
                 .frame(width: 36, height: 34)
-                .foregroundColor(active ? .orange : .white)
+                .foregroundColor(active ? .orange : .primary)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -406,7 +407,7 @@ struct ReaderView: View {
         let label = Image(systemName: "wand.and.stars")
             .font(.system(size: 15, weight: .semibold))
             .frame(width: 36, height: 34)
-            .foregroundColor(model.enhance ? .orange : .white)
+            .foregroundColor(model.enhance ? .orange : .primary)
             .contentShape(Rectangle())
 
         return Group {

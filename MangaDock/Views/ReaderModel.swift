@@ -555,9 +555,9 @@ final class ReaderModel: ObservableObject {
         let slot = enhance ? 1 : 0
 
         for position in index..<end {
-            // At most two background decodes at a time: the visible page keeps
-            // its CPU share and the memory peak stays sane.
-            if prewarming.count >= 2 { break }
+            // 同时最多 3 个后台解码。原来写死 2，A 系芯片解码一页 2200px
+            // 长图要 300ms 上下，2 个并发追不上连续翻页的节奏。
+            if prewarming.count >= 3 { break }
 
             let key = NSNumber(value: position * 2 + slot)
             guard imageCache.object(forKey: key) == nil,
@@ -568,6 +568,11 @@ final class ReaderModel: ObservableObject {
                 self?.prewarming.remove(position)
             }
         }
+    }
+
+    /// 往回翻时也预热一页。用户往回看上一页很常见，没预热就是同样的转圈。
+    func prewarmPrevious(from index: Int) {
+        prewarm(from: index - 1, count: 1)
     }
 
     /// Decoded byte size, for NSCache's byte-based eviction.

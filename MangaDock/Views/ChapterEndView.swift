@@ -3,28 +3,33 @@ import SwiftUI
 /// Virtual last page: shows up when the folder has a next chapter.
 struct ChapterEndView: View {
     @ObservedObject var model: ReaderModel
+    /// 分页模式用：滑到这一页就等于「我要看下一话」，自动翻过去，
+    /// 不用再点按钮。条漫模式传 false（列表末尾常驻，不能自动跳）。
+    var autoAdvance: Bool = false
+
+    @State private var didAutoAdvance = false
 
     var body: some View {
         ZStack {
-            Color.black
+            Color(.systemBackground)
 
             VStack(spacing: 16) {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 42, weight: .light))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.secondary.opacity(0.6))
 
                 Text("本话看完")
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
 
                 if let next = model.nextItem {
                     VStack(spacing: 4) {
                         Text("下一话")
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(.secondary)
                         Text(next.displayName)
                             .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.85))
+                            .foregroundColor(.primary.opacity(0.85))
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
                     }
@@ -43,7 +48,7 @@ struct ChapterEndView: View {
                 } else {
                     Text("这是最后一话")
                         .font(.footnote)
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(.secondary.opacity(0.6))
                 }
 
                 if let error = model.chapterError {
@@ -62,11 +67,16 @@ struct ChapterEndView: View {
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
-                    .tint(.white.opacity(0.8))
+                    .tint(.primary.opacity(0.7))
                     .padding(.top, 4)
                 }
             }
             .padding(24)
+        }
+        .onAppear {
+            guard autoAdvance, !didAutoAdvance, model.nextItem != nil else { return }
+            didAutoAdvance = true
+            Task { await model.advanceChapter(direction: 1) }
         }
     }
 }
