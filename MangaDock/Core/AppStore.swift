@@ -98,6 +98,18 @@ final class AppStore: ObservableObject {
     /// 逐个探测地址，返回第一个能连上的。只有一个地址时直接用（不探测）。
     /// 全部失败则回退到第一个，让后续请求正常报错而非空转。
     @discardableResult
+    /// 上次 Ping 通的地址。冷启动直接用它，省掉一轮探测。
+    private var lastGoodURL: URL? {
+        get {
+            guard let s = UserDefaults.standard.string(forKey: "mangadock.lastGoodURL"),
+                  let url = URL(string: s) else { return nil }
+            return url
+        }
+        set {
+            UserDefaults.standard.set(newValue?.absoluteString, forKey: "mangadock.lastGoodURL")
+        }
+    }
+
     func probeServers() async -> URL? {
         let urls = serverURLs
         guard !urls.isEmpty else { return nil }
@@ -105,18 +117,39 @@ final class AppStore: ObservableObject {
             activeURL = urls[0]
             return urls[0]
         }
+
+        // 冷启动先用上次成功的地址：外网场景下内网地址必然连不上，
+        // 串行探测要白等一个超时。这里直接跳过这一轮。
+        if let last = lastGoodURL, urls.contains(last) {
+            activeURL = last
+            return last
+        }
+
+        // 并行探测所有地址，谁先通就用谁。原来是串行 for 循环，
+        // 每个超时 10 秒 —— 两个地址在外网下最坏要等 20 秒。
         let username = self.username
         let password = self.password
-        for url in urls {
-            // 探测超时：连不上的地址跳过，但别太快（3 秒会让启动加载圈一闪就没了）。
-            let client = WebDAVClient(username: username, password: password, baseURL: url, timeout: 10)
-            if (try? await client.ping()) != nil {
-                activeURL = url
-                return url
+        let found: URL? = await withTaskGroup(of: URL?.self) { group in
+            for url in urls {
+                group.addTask {
+                    let client = WebDAVClient(username: username, password: password,
+                                              baseURL: url, timeout: 4)
+                    return (try? await client.ping()) != nil ? url : nil
+                }
             }
+            for await result in group {
+                if let result {
+                    group.cancelAll()
+                    return result
+                }
+            }
+            return nil
         }
-        activeURL = urls[0]
-        return urls[0]
+
+        let winner = found ?? urls[0]
+        activeURL = winner
+        if found != nil { lastGoodURL = winner }
+        return winner
     }
 
     var baseURL: URL? {

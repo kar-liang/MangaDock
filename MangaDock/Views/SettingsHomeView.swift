@@ -117,7 +117,6 @@ struct ReadingSettingsView: View {
     @AppStorage("mangadock.defaultLayout") private var defaultLayoutRaw = LayoutMode.grid.rawValue
     @AppStorage("mangadock.tab.shelf") private var showShelfTab = true
     @AppStorage("mangadock.tab.files") private var showFilesTab = true
-    @AppStorage("mangadock.tab.history") private var showHistoryTab = false
     @AppStorage("mangadock.bangumi.enabled") private var bangumiEnabled = true
     @AppStorage("mangadock.bangumi.base") private var bangumiBase = ""
 
@@ -207,7 +206,6 @@ struct ReadingSettingsView: View {
             Section {
                 Toggle("书架", isOn: $showShelfTab)
                 Toggle("文件", isOn: $showFilesTab)
-                Toggle("记录", isOn: $showHistoryTab)
             } header: {
                 Text("底栏标签")
             } footer: {

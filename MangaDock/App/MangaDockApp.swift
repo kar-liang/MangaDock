@@ -55,9 +55,10 @@ struct RootView: View {
         .tint(AppTheme(rawValue: themeRaw)?.tint)
         .task {
             await store.probeServers()
-            await store.pullSync()
-            // 探测 + 同步都完成才放行；封面加载由上方 overlay 继续兜底。
+            // 只等探测，不等同步 —— 同步走网络，外网慢的时候会把启动页
+            // 拖成几秒的黑屏。书架本身有本地缓存，先用旧的完全没问题。
             probed = true
+            await store.pullSync()
         }
     }
 }

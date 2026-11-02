@@ -59,15 +59,31 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
 }
 
 enum ReaderMode: String, CaseIterable, Identifiable {
+    /// 普通模式：从左往右翻（欧美/国漫习惯）
     case paged
+    /// 日漫模式：从右往左翻（书从右装订）
+    case rightToLeft
+    /// 条漫模式：上下连续滚动
     case vertical
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .paged: return "左右翻页"
-        case .vertical: return "上下滚动"
+        case .paged: return "普通模式"
+        case .rightToLeft: return "日漫模式"
+        case .vertical: return "条漫模式"
         }
     }
+
+    var detail: String {
+        switch self {
+        case .paged: return "左右翻页，从左往右"
+        case .rightToLeft: return "左右翻页，从右往左（日漫）"
+        case .vertical: return "上下连续滚动"
+        }
+    }
+
+    /// 是否左右翻页（普通 + 日漫）
+    var isPaged: Bool { self != .vertical }
 }

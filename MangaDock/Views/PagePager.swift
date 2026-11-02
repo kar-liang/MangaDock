@@ -15,6 +15,8 @@ protocol PagerPage: AnyObject {
 struct PagePager: UIViewControllerRepresentable {
     @ObservedObject var model: ReaderModel
     @Binding var index: Int
+    /// 日漫模式：翻页方向反转（书从右装订，下一页在左边）
+    var isRightToLeft: Bool = false
 
     var onTapLeft: () -> Void = {}
     var onTapCenter: () -> Void = {}
@@ -116,18 +118,21 @@ struct PagePager: UIViewControllerRepresentable {
 
         // MARK: Paging
 
+        /// 日漫模式下 before/after 对调：手指往右滑才是「下一页」。
         func pageViewController(_ pageViewController: UIPageViewController,
                                 viewControllerBefore viewController: UIViewController) -> UIViewController? {
-            guard let page = viewController as? PagerPage,
-                  page.pageIndex > 0 else { return nil }
-            return controller(for: page.pageIndex - 1)
+            guard let page = viewController as? PagerPage else { return nil }
+            let target = parent.isRightToLeft ? page.pageIndex + 1 : page.pageIndex - 1
+            guard target >= 0, target < parent.model.displayPageCount else { return nil }
+            return controller(for: target)
         }
 
         func pageViewController(_ pageViewController: UIPageViewController,
                                 viewControllerAfter viewController: UIViewController) -> UIViewController? {
-            guard let page = viewController as? PagerPage,
-                  page.pageIndex + 1 < parent.model.displayPageCount else { return nil }
-            return controller(for: page.pageIndex + 1)
+            guard let page = viewController as? PagerPage else { return nil }
+            let target = parent.isRightToLeft ? page.pageIndex - 1 : page.pageIndex + 1
+            guard target >= 0, target < parent.model.displayPageCount else { return nil }
+            return controller(for: target)
         }
 
         func pageViewController(_ pageViewController: UIPageViewController,
@@ -143,6 +148,12 @@ struct PagePager: UIViewControllerRepresentable {
             guard completed,
                   let page = pageViewController.viewControllers?.first as? PagerPage else { return }
             parent.index = page.pageIndex
+
+            // 滑到章节结尾页 = 想看下一话，直接换章，不用再点按钮。
+            // 放在这里而不是 ChapterEndView.onAppear：UIKit 的翻页回调更可靠。
+            if page.pageIndex >= parent.model.pageCount {
+                Task { await parent.model.advanceChapter(direction: 1) }
+            }
         }
     }
 }

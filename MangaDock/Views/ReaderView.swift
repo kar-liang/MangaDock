@@ -6,7 +6,7 @@ struct ReaderView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showBars = true
-    @State private var verticalOverride: Bool? = nil
+    @State private var modeOverride: ReaderMode? = nil
     /// Chapter picker sheet (jump anywhere in the series without leaving).
     @State private var showChapterList = false
     /// Guards the "pull past bottom → next chapter" jump against re-firing.
@@ -28,9 +28,15 @@ struct ReaderView: View {
 
     /// Settings decides the opening mode; the toolbar toggle only overrides it
     /// for the chapter you're currently reading.
-    private var verticalMode: Bool {
-        verticalOverride ?? (defaultReaderMode == ReaderMode.vertical.rawValue)
+    /// 当前阅读模式。设置里定默认，顶栏按钮只覆盖当前这本。
+    private var currentMode: ReaderMode {
+        modeOverride ?? (ReaderMode(rawValue: defaultReaderMode) ?? .paged)
     }
+
+    private var verticalMode: Bool { currentMode == .vertical }
+
+    /// 日漫模式：翻页方向反转
+    private var isRightToLeft: Bool { currentMode == .rightToLeft }
 
     /// 分页模式白底（和纸书一样，图片外的留白是白的）；
     /// 条漫模式保持黑底，连续长图在黑底上不刺眼。
@@ -38,8 +44,21 @@ struct ReaderView: View {
         verticalMode ? .black : .white
     }
 
-    private func toggleVerticalMode() {
-        verticalOverride = !verticalMode
+    /// 顶栏按钮在三态之间循环：普通 → 日漫 → 条漫 → 普通
+    private func cycleReaderMode() {
+        switch currentMode {
+        case .paged: modeOverride = .rightToLeft
+        case .rightToLeft: modeOverride = .vertical
+        case .vertical: modeOverride = .paged
+        }
+    }
+
+    private var modeIcon: String {
+        switch currentMode {
+        case .paged: return "arrow.right"
+        case .rightToLeft: return "arrow.left"
+        case .vertical: return "scroll"
+        }
     }
 
     private var readerReady: Bool {
@@ -108,6 +127,7 @@ struct ReaderView: View {
         } else {
             PagePager(model: model,
                       index: $model.index,
+                      isRightToLeft: isRightToLeft,
                       onTapLeft: handleTapLeft,
                       onTapCenter: toggleBars,
                       onTapRight: handleTapRight,
@@ -346,7 +366,7 @@ struct ReaderView: View {
             iconButton("list.bullet") { showChapterList = true }
                 .accessibilityLabel("章节列表")
             enhanceMenuButton()
-            iconButton(verticalMode ? "rectangle.grid.1x2" : "scroll") { toggleVerticalMode() }
+            iconButton(modeIcon) { cycleReaderMode() }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
