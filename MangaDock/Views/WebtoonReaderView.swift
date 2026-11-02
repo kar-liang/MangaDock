@@ -376,12 +376,25 @@ struct WebtoonReaderView: UIViewRepresentable {
             updateProgress(scrollView)
             positionIndicator()
 
-            // 底部 overshoot 换章（只在 1x 时，放大看细节不误触发）。
+            // 底部 overshoot 换章**不在这里判**。滚动过程中每一帧都会冲过阈值，
+            // 手指一甩就跳章，根本停不下来 —— 见 scrollViewDidEndDragging。
+        }
+
+        /// 底部拉过头换下一话。
+        ///
+        /// 判据放在「松手」这个时刻，而不是滚动过程中：
+        /// 滚动时 offset 会因为惯性瞬间越过任何阈值，用户完全没机会看完结尾卡。
+        /// 现在必须**滑到底之后还能再拉出 100pt 再松手**，才算「我要往下走」。
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            // 放大看细节时不换章
             guard scrollView.zoomScale < 1.05 else { return }
+            // 内容比屏幕还短时没有「到底」可言，别误判
+            guard scrollView.contentSize.height > scrollView.bounds.height else { return }
+
             let bottom = scrollView.contentSize.height - scrollView.bounds.height
-            if scrollView.contentOffset.y > bottom + 30 {
-                parent.onNextChapter?()
-            }
+            let overshoot = scrollView.contentOffset.y - bottom
+            guard overshoot > 100 else { return }
+            parent.onNextChapter?()
         }
 
         /// 根据 contentOffset 算出当前可视页，回写进度。
