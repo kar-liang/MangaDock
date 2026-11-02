@@ -52,6 +52,7 @@ struct WebtoonReaderView: UIViewRepresentable {
         let single = UITapGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleSingleTap(_:)))
         single.numberOfTapsRequired = 1
+        single.delegate = context.coordinator
         scroll.addGestureRecognizer(single)
 
         context.coordinator.buildPages(in: scroll)
@@ -76,7 +77,7 @@ struct WebtoonReaderView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, UIScrollViewDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var parent: WebtoonReaderView
         weak var scrollView: UIScrollView?
         var contentView: UIView?
@@ -101,6 +102,16 @@ struct WebtoonReaderView: UIViewRepresentable {
         /// 悬浮在可视区中心的转圈。不挂在某一页上：条漫单页可能比屏幕还高，
         /// 挂在页面中心的话转圈会跑到屏幕外面去。
         private var indicator: UIActivityIndicatorView?
+        /// 转圈下面的说明文字，跟图1 那种「正在下载 xxx」的反馈对齐。
+        private var indicatorLabel: UILabel?
+        /// 结尾卡（本话看完 / 下一话）。用 UIHostingController 把 SwiftUI 的
+        /// ChapterEndView 塞进 UIScrollView 的内容末尾。
+        ///
+        /// 2.0.12 把条漫从 SwiftUI 的 LazyVStack 换成原生 UIScrollView 时，
+        /// 这一块被漏掉了 —— 原来的 `if nextItem != nil { ChapterEndView(...) }`
+        /// 变成了 `let footer: CGFloat = 300` 的一段空白。用户滑到底只看到黑屏。
+        private var endHost: UIHostingController<ChapterEndView>?
+        private let endCardHeight: CGFloat = 360
 
         init(parent: WebtoonReaderView) {
             self.parent = parent
@@ -132,8 +143,20 @@ struct WebtoonReaderView: UIViewRepresentable {
                 ind.isUserInteractionEnabled = false
                 scroll.addSubview(ind)
                 indicator = ind
+
+                let label = UILabel()
+                label.font = .preferredFont(forTextStyle: .footnote)
+                label.textColor = UIColor.white.withAlphaComponent(0.85)
+                label.textAlignment = .center
+                label.isHidden = true
+                label.isUserInteractionEnabled = false
+                scroll.addSubview(label)
+                indicatorLabel = label
             }
             indicator?.stopAnimating()
+            indicatorLabel?.isHidden = true
+
+            rebuildEndCard(in: contentView)
 
             let count = pageCount
             for i in 0..<count {
@@ -155,6 +178,15 @@ struct WebtoonReaderView: UIViewRepresentable {
             loadVisiblePages()
         }
 
+        /// 重建内容末尾的结尾卡。
+        private func rebuildEndCard(in contentView: UIView) {
+            endHost?.view.removeFromSuperview()
+            let host = UIHostingController(rootView: ChapterEndView(model: parent.model))
+            host.view.backgroundColor = .clear
+            contentView.addSubview(host.view)
+            endHost = host
+        }
+
         /// 计算所有页 frame 和 contentView 高度。
         func relayout() {
             guard let contentView, let scrollView else { return }
@@ -169,10 +201,14 @@ struct WebtoonReaderView: UIViewRepresentable {
                 pageViews[i].frame = CGRect(x: 0, y: y, width: width, height: height)
                 y += height
             }
-            // 末尾留一段空白，容纳「本话看完 / 下一话」的 overshoot 区。
-            let footer: CGFloat = 300
-            contentView.frame = CGRect(x: 0, y: 0, width: width, height: y + footer)
-            scrollView.contentSize = CGSize(width: width, height: y + footer)
+            // 结尾卡压在最后一页下面。
+            if let card = endHost?.view, card.superview != nil {
+                card.frame = CGRect(x: 0, y: y, width: width, height: endCardHeight)
+                y += endCardHeight
+            }
+
+            contentView.frame = CGRect(x: 0, y: 0, width: width, height: y)
+            scrollView.contentSize = CGSize(width: width, height: y)
 
             // 重排后可视范围变了，补一次按需加载。
             // 首次进入时 pageWidth 是 0、relayout 直接 return，所有页都是零尺寸；
@@ -272,30 +308,42 @@ struct WebtoonReaderView: UIViewRepresentable {
             let top = scrollView.contentOffset.y / zoom
             let bottom = (scrollView.contentOffset.y + scrollView.bounds.height) / zoom
 
-            var waiting = false
+            var waiting: Int?
             for i in 0..<pageViews.count {
                 let f = pageViews[i].frame
                 // 只算真正落在视口里的页
                 guard f.maxY > top, f.minY < bottom else { continue }
                 if pageViews[i].image == nil, !failedPages.contains(i) {
-                    waiting = true
+                    waiting = i
                     break
                 }
             }
 
-            if waiting {
+            if let index = waiting {
+                indicatorLabel?.text = pageCount > 1
+                    ? "正在加载 第 \(index + 1) / \(pageCount) 页"
+                    : "正在加载…"
+                indicatorLabel?.isHidden = false
                 positionIndicator()
                 ind.startAnimating()
             } else {
                 ind.stopAnimating()
+                indicatorLabel?.isHidden = true
             }
         }
 
-        /// 把转圈摆到当前可视区中心（contentOffset 走了它得跟着走）。
+        /// 把转圈和说明文字摆到当前可视区中心（contentOffset 走了它们得跟着走）。
         private func positionIndicator() {
             guard let scrollView, let ind = indicator else { return }
-            ind.center = CGPoint(x: scrollView.contentOffset.x + scrollView.bounds.width / 2,
-                                 y: scrollView.contentOffset.y + scrollView.bounds.height / 2)
+            let cx = scrollView.contentOffset.x + scrollView.bounds.width / 2
+            let cy = scrollView.contentOffset.y + scrollView.bounds.height / 2
+            let hasLabel = indicatorLabel?.isHidden == false
+            ind.center = CGPoint(x: cx, y: hasLabel ? cy - 16 : cy)
+
+            if let label = indicatorLabel, hasLabel {
+                label.sizeToFit()
+                label.center = CGPoint(x: cx, y: cy + 22)
+            }
         }
 
         // MARK: - Tap
@@ -303,6 +351,12 @@ struct WebtoonReaderView: UIViewRepresentable {
         @objc func handleSingleTap(_ recognizer: UITapGestureRecognizer) {
             // 单击立即触发（双击已删除，无需延迟等双击判定）。
             parent.onTap?()
+        }
+
+        /// 点在结尾卡的按钮上时别顺手把工具栏切出来。
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldReceive touch: UITouch) -> Bool {
+            !(touch.view is UIControl)
         }
 
         // MARK: - UIScrollViewDelegate
