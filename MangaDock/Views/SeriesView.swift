@@ -150,13 +150,27 @@ struct SeriesView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 downloadMenu
-                Button {
-                    descending.toggle()
-                    PerComicPrefs.setChapterOrder(descending, for: folder.url)
+                // 箭头看不出是「点一下会变成什么」还是「当前是什么」，直接写字
+                Menu {
+                    Button {
+                        guard descending else { return }
+                        descending = false
+                        PerComicPrefs.setChapterOrder(false, for: folder.url)
+                    } label: {
+                        if descending { Text("正序（旧→新）") } else { Label("正序（旧→新）", systemImage: "checkmark") }
+                    }
+                    Button {
+                        guard !descending else { return }
+                        descending = true
+                        PerComicPrefs.setChapterOrder(true, for: folder.url)
+                    } label: {
+                        if descending { Label("倒序（新→旧）", systemImage: "checkmark") } else { Text("倒序（新→旧）") }
+                    }
                 } label: {
-                    Image(systemName: descending ? "arrow.up" : "arrow.down")
+                    Text(descending ? "倒序" : "正序")
+                        .font(.subheadline.weight(.medium))
                 }
-                .accessibilityLabel(descending ? "切换到正序" : "切换到倒序")
+                .accessibilityLabel("章节排序：\(descending ? "倒序" : "正序")")
             }
         }
         .onAppear {

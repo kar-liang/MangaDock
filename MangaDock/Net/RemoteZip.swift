@@ -161,6 +161,13 @@ final class RemoteZipComicSource: ComicPageSource {
     private let client: WebDAVClient
     private let fileLength: Int64
 
+    /// 已下载的原始页数据。
+    ///
+    /// 页面图被卸载（滚出缓冲区）后滚回来时，以前必须重新 Range 拉一遍 ——
+    /// 日志里第 7 页 20 秒内被下了三次，每次 3.6MB。图太大装不进 UIImage 缓存
+    /// （3000x4762 一张就 57MB），所以只能在 Data 这层兜住。
+    private let dataCache = NSCache<NSNumber, NSData>()
+
     init(url: URL, client: WebDAVClient) async throws {
         guard let length = try await client.contentLength(url), length > 2_048 else {
             throw ZipError.corrupt
@@ -179,13 +186,26 @@ final class RemoteZipComicSource: ComicPageSource {
         self.url = url
         self.client = client
         self.fileLength = length
+
+        // 一话通常 8~12 页，每页 3~6MB，64MB 够留最近几页的原图数据。
+        dataCache.countLimit = 12
+        dataCache.totalCostLimit = 64 * 1024 * 1024
     }
 
     func pageData(at index: Int) async throws -> Data {
         guard index >= 0, index < pageCount else { throw ZipError.corrupt }
-        return try await RemoteZip.payload(for: entries[index],
-                                           url: url,
-                                           client: client,
-                                           fileLength: fileLength)
+
+        let key = NSNumber(value: index)
+        if let cached = dataCache.object(forKey: key) {
+            diagAsync("cache", "hit page \(index + 1) \(diagBytes(cached.length))")
+            return cached as Data
+        }
+
+        let data = try await RemoteZip.payload(for: entries[index],
+                                               url: url,
+                                               client: client,
+                                               fileLength: fileLength)
+        dataCache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
     }
 }

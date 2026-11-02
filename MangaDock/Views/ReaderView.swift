@@ -43,13 +43,10 @@ struct ReaderView: View {
     /// 不然白底上的白字全看不见。
     private var pageBackground: Color { .white }
 
-    /// 顶栏按钮在三态之间循环：普通 → 日漫 → 条漫 → 普通
-    private func cycleReaderMode() {
-        switch currentMode {
-        case .paged: modeOverride = .rightToLeft
-        case .rightToLeft: modeOverride = .vertical
-        case .vertical: modeOverride = .paged
-        }
+    /// 设置当前这一本的阅读模式（只覆盖本次，不改全局偏好）。
+    private func setMode(_ mode: ReaderMode) {
+        guard mode != currentMode else { return }
+        modeOverride = mode
     }
 
     private var modeIcon: String {
@@ -364,7 +361,7 @@ struct ReaderView: View {
             iconButton("list.bullet") { showChapterList = true }
                 .accessibilityLabel("章节列表")
             enhanceMenuButton()
-            iconButton(modeIcon) { cycleReaderMode() }
+            modeMenuButton()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -405,6 +402,31 @@ struct ReaderView: View {
 
     private func hideBars() {
         withAnimation(.easeInOut(duration: 0.15)) { showBars = false }
+    }
+
+    /// 阅读模式三选一。原来是点一下循环切换 —— 得先知道顺序才用得明白，
+    /// 干脆直接列出来，选哪个是哪个。
+    private func modeMenuButton() -> some View {
+        Menu {
+            ForEach(ReaderMode.allCases) { mode in
+                Button {
+                    setMode(mode)
+                } label: {
+                    if mode == currentMode {
+                        Label(mode.title, systemImage: "checkmark")
+                    } else {
+                        Text(mode.title)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: modeIcon)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 40, height: 34)
+                .foregroundColor(.primary)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("阅读模式：\(currentMode.title)")
     }
 
     private func iconButton(_ name: String, active: Bool = false,

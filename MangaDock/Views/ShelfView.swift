@@ -35,8 +35,10 @@ struct ShelfView: View {
                     Button {
                         showAddWebComic = true
                     } label: {
-                        Image(systemName: "plus")
+                        // 这是「用网址加一本在线漫画」，不是「新建」—— ＋ 号容易看成新建书架
+                        Image(systemName: "link")
                     }
+                    .accessibilityLabel("用网址添加在线漫画")
                 }
             }
             .libraryNavigation()
