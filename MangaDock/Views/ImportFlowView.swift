@@ -270,42 +270,20 @@ struct ServerFormView: View {
         testing = true
         message = nil
 
-        var reachable: [String] = []
-        var failures: [String] = []
-        for line in lines {
-            guard let url = AppStore.normalizedURL(line), url.host != nil else {
-                failures.append("\(line)：格式不对")
-                continue
-            }
-            do {
-                switch kind {
-                case .webdav:
-                    let client = WebDAVClient(username: username, password: password,
-                                              baseURL: url)
-                    _ = try await client.ping()
-                case .komga:
-                    let client = KomgaClient(baseURL: url, username: username,
+        let outcome = await ServerProbe.test(kind: kind,
+                                             address: address,
+                                             username: username,
                                              password: password)
-                    try await client.ping()
-                }
-                reachable.append(line)
-            } catch {
-                failures.append("\(url.host ?? line)：\(NetErrorText.friendly(error))")
-            }
-        }
-
         testing = false
+        message = outcome.summary
+        isError = !outcome.isOK
 
-        guard !reachable.isEmpty else {
-            message = "连不上：\(failures.joined(separator: "；"))"
-            isError = true
-            return
-        }
+        guard outcome.isOK else { return }
 
         // 只存连得上的地址，免得以后每次启动都白等一轮超时
         store.activate(kind: kind,
                        displayName: displayName,
-                       serverURL: reachable.joined(separator: "\n"),
+                       serverURL: outcome.reachable.joined(separator: "\n"),
                        username: username,
                        password: password)
         onSaved()

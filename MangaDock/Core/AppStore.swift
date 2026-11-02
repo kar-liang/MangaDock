@@ -279,7 +279,7 @@ final class AppStore: ObservableObject {
     /// 任意一套配过就算配置好了 —— 两套并存，能进主界面就行
     var isConfigured: Bool { !configuredKinds.isEmpty }
 
-    static func normalizedURL(_ text: String) -> URL? {
+    nonisolated static func normalizedURL(_ text: String) -> URL? {
         var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
         let lower = t.lowercased()

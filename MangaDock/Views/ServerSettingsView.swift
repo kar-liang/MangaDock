@@ -89,7 +89,8 @@ struct ServerSettingsView: View {
                 }
             }
 
-            if !initialSetup {
+            // 诊断走的是 WebDAV 的 PROPFIND / 证书 / 同端口那套，Komga 下没意义
+            if !initialSetup && store.serverKind == .webdav {
                 Section {
                     Button {
                         Task { await runDiagnostics() }
@@ -184,33 +185,23 @@ struct ServerSettingsView: View {
         isTesting = true
         message = nil
 
-        var ok = 0
-        var failures: [String] = []
-        for line in lines {
-            guard let url = AppStore.normalizedURL(line), url.host != nil else {
-                failures.append("\(line)：格式不对")
-                continue
-            }
-            let client = WebDAVClient(username: username, password: password, baseURL: url)
-            do {
-                _ = try await client.ping()
-                ok += 1
-            } catch {
-                failures.append("\(url.host ?? line)：\(NetErrorText.friendly(error))")
-            }
-        }
-
-        if ok > 0 {
-            store.save(serverURL: serverURL, username: username, password: password,
-                       displayName: displayName)
-            let suffix = failures.isEmpty ? "" : "（\(failures.count) 个连不上）"
-            message = "\(ok) 个地址可用\(suffix)"
-            isError = false
-        } else {
-            message = "全部连不上：\(failures.joined(separator: "；"))"
-            isError = true
-        }
+        // 和导入向导走同一套探测：按类型选客户端、并行、8 秒超时。
+        // 原来这里写死 WebDAVClient，选 Komga 时会挂到 120 秒超时才失败。
+        let outcome = await ServerProbe.test(kind: store.serverKind,
+                                             address: serverURL,
+                                             username: username,
+                                             password: password)
         isTesting = false
+        message = outcome.summary
+        isError = !outcome.isOK
+
+        guard outcome.isOK else { return }
+
+        // 只存连得上的地址（不可达的留着每次启动都白等一轮超时）
+        store.save(serverURL: outcome.reachable.joined(separator: "\n"),
+                   username: username,
+                   password: password,
+                   displayName: displayName)
     }
 }
 
