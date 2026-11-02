@@ -38,11 +38,10 @@ struct ReaderView: View {
     /// 日漫模式：翻页方向反转
     private var isRightToLeft: Bool { currentMode == .rightToLeft }
 
-    /// 分页模式白底（和纸书一样，图片外的留白是白的）；
-    /// 条漫模式保持黑底，连续长图在黑底上不刺眼。
-    private var pageBackground: Color {
-        verticalMode ? .black : .white
-    }
+    /// 三种模式统一白底。
+    /// 条漫原来是黑底，2.0.47 起统一成白 —— 加载提示、结尾卡、工具栏配色也跟着走浅色方案，
+    /// 不然白底上的白字全看不见。
+    private var pageBackground: Color { .white }
 
     /// 顶栏按钮在三态之间循环：普通 → 日漫 → 条漫 → 普通
     private func cycleReaderMode() {
@@ -80,9 +79,8 @@ struct ReaderView: View {
                 }
             }
         }
-        // 分页模式用白底（图片外的留白是白的），条漫模式保持黑底。
-        // 颜色方案跟着走：白底要浅色方案，否则状态栏和 .primary 文字都是白的，看不见。
-        .preferredColorScheme(verticalMode ? .dark : .light)
+        // 三种模式统一白底，所以固定浅色方案：状态栏、.primary 文字才不会变成白色看不见。
+        .preferredColorScheme(.light)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
@@ -198,7 +196,7 @@ struct ReaderView: View {
                               chapterJumpArmed = true
                               Task { await goNextChapter() }
                           })
-            .background(Color.black)
+            .background(Color.white)
             .background(
                 GeometryReader { geo in
                     Color.clear

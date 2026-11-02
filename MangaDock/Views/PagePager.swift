@@ -84,8 +84,10 @@ struct PagePager: UIViewControllerRepresentable {
                 host.pageIndex = position
                 return host
             }
-            // 分页模式：滑到结尾页直接进下一话，不用点按钮
-            let host = ChapterEndHost(rootView: ChapterEndView(model: parent.model, autoAdvance: true))
+            // 结尾页停住，要明确点「继续阅读」才换话。
+            // 原来这里是 autoAdvance: true —— 滑到结尾页立刻跳走，根本看不清卡片内容。
+            // 条漫那边本来就要「再拉一下」，现在两边统一：都停在卡片上，人工决定。
+            let host = ChapterEndHost(rootView: ChapterEndView(model: parent.model))
             host.pageIndex = position
             return host
         }

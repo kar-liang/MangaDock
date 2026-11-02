@@ -15,7 +15,9 @@ struct ComicPageView: View {
 
     var body: some View {
         ZStack {
-            Color.black
+            // 2.0.29 说要把这层改成白，但那次提交根本没动这个文件（黑底一直留着）。
+            // 2.0.47 统一三种模式白底时一并补上。
+            Color.white
             pageContent
         }
         .contentShape(Rectangle())
@@ -43,23 +45,23 @@ struct ComicPageView: View {
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.largeTitle)
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.primary.opacity(0.6))
                 Text("第 \(index + 1) 页加载失败")
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(.primary.opacity(0.8))
                 Button("重试") {
                     Task { await load() }
                 }
                 .buttonStyle(.bordered)
-                .tint(.white)
+                .tint(.primary)
             }
         } else {
             VStack(spacing: 12) {
                 ProgressView()
                     .progressViewStyle(.circular)
-                    .tint(.white)
+                    .tint(.primary.opacity(0.55))
                 Text("正在加载 第 \(index + 1) / \(model.pageCount) 页")
                     .font(.footnote)
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.primary.opacity(0.65))
             }
         }
     }

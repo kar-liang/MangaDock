@@ -1,6 +1,20 @@
 import SwiftUI
 import UIKit
 
+/// 能在布局完成后回调的 UIScrollView。
+///
+/// 首帧的 `bounds` 只有在 `layoutSubviews` 里才是准的：`makeUIView` 那一刻是零，
+/// `DispatchQueue.main.async` 也未必赶得上（SwiftUI 的布局是在更后面的 runloop 做的）。
+/// 条漫「首进全黑三四秒」就是因为宽度一直是 0，所有页都是零尺寸。
+final class LayoutReportingScrollView: UIScrollView {
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+
 /// 条漫模式的整章缩放视图。
 ///
 /// 把整个章节当成「一张超长图」来缩放：所有页面垂直拼成一个 contentView，
@@ -28,9 +42,9 @@ struct WebtoonReaderView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UIScrollView {
-        let scroll = UIScrollView()
+        let scroll = LayoutReportingScrollView()
         scroll.delegate = context.coordinator
-        scroll.backgroundColor = .black
+        scroll.backgroundColor = .white
         scroll.showsVerticalScrollIndicator = false
         scroll.showsHorizontalScrollIndicator = false
         scroll.contentInsetAdjustmentBehavior = .never
@@ -43,7 +57,7 @@ struct WebtoonReaderView: UIViewRepresentable {
         scroll.bouncesZoom = true
 
         let content = UIView()
-        content.backgroundColor = .black
+        content.backgroundColor = .white
         scroll.addSubview(content)
         context.coordinator.contentView = content
         context.coordinator.scrollView = scroll
@@ -55,14 +69,10 @@ struct WebtoonReaderView: UIViewRepresentable {
         single.delegate = context.coordinator
         scroll.addGestureRecognizer(single)
 
+        let coord = context.coordinator
+        scroll.onLayout = { [weak coord] in coord?.handleLayout() }
+
         context.coordinator.buildPages(in: scroll)
-        // makeUIView 这一刻还没走完布局，scroll.bounds 往往是零。
-        // 下一 runloop 再补一次：这样即便 SwiftUI 的 pageWidth 迟迟不到，
-        // 也能用 scrollView 自己的宽度排版并开始加载，不会干等着全黑。
-        DispatchQueue.main.async {
-            context.coordinator.relayout()
-            context.coordinator.refreshIndicator()
-        }
         return scroll
     }
 
@@ -145,7 +155,7 @@ struct WebtoonReaderView: UIViewRepresentable {
             // positionIndicator() 摆到可视区中心。
             if indicator == nil {
                 let ind = UIActivityIndicatorView(style: .medium)
-                ind.color = UIColor.white.withAlphaComponent(0.9)
+                ind.color = UIColor.black.withAlphaComponent(0.55)
                 ind.hidesWhenStopped = true
                 ind.isUserInteractionEnabled = false
                 scroll.addSubview(ind)
@@ -153,7 +163,7 @@ struct WebtoonReaderView: UIViewRepresentable {
 
                 let label = UILabel()
                 label.font = .preferredFont(forTextStyle: .footnote)
-                label.textColor = UIColor.white.withAlphaComponent(0.85)
+                label.textColor = UIColor.black.withAlphaComponent(0.8)
                 label.textAlignment = .center
                 label.isHidden = true
                 label.isUserInteractionEnabled = false
@@ -172,7 +182,7 @@ struct WebtoonReaderView: UIViewRepresentable {
                 // 不会像 scaleAspectFit 那样在边缘留黑边。
                 iv.contentMode = .scaleToFill
                 iv.clipsToBounds = true
-                iv.backgroundColor = .black
+                iv.backgroundColor = .white
                 contentView.addSubview(iv)
                 pageViews.append(iv)
                 layoutAspects.append(parent.model.aspect(for: i))
@@ -183,6 +193,20 @@ struct WebtoonReaderView: UIViewRepresentable {
             scroll.setZoomScale(1, animated: false)
             scroll.contentOffset = .zero
             loadVisiblePages()
+        }
+
+        /// 布局完成后补一次排版 + 加载。
+        ///
+        /// 只在「宽度变了」或「还有页是零高度」时重排，避免
+        /// layoutSubviews ↔ contentSize 变化互相触发形成死循环。
+        func handleLayout() {
+            guard let scrollView, scrollView.bounds.width > 0 else { return }
+            let needsRelayout = abs(layoutWidth - scrollView.bounds.width) > 0.5
+                || pageViews.contains { $0.frame.height == 0 }
+            if needsRelayout {
+                relayout()   // 内部已经调过 loadVisiblePages
+            }
+            refreshIndicator()
         }
 
         /// 重建内容末尾的结尾卡。
@@ -261,10 +285,9 @@ struct WebtoonReaderView: UIViewRepresentable {
                 loadPage(i)
             }
 
-            // 预加载下一话（沿用既有逻辑）。
-            if last >= pageCount - 1 {
-                parent.model.preloadNextChapterIfNeeded()
-            }
+            // 预加载下一话：判据统一交给 model（最后 5 页内自动触发），
+            // 视图层不再额外要求「必须滚到最后一页」—— 那样两边触发时机不一致。
+            parent.model.preloadNextChapterIfNeeded()
 
             refreshIndicator()
         }
