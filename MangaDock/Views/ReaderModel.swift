@@ -114,18 +114,26 @@ final class ReaderModel: ObservableObject {
 
     func start(client: RemoteClient, startPage: Int) async {
         self.client = client
+        let started = Date()
         diag("reader", "open name=\(currentItem.name) startPage=\(startPage) url=\(currentItem.url.absoluteString)")
         isLoading = true
         errorMessage = nil
         chapterError = nil
 
+        let seriesStarted = Date()
         await buildSeries(client: client)
+        diag("timing", "buildSeries \(diagElapsed(seriesStarted)) series=\(series.count)")
 
         do {
+            let prepStarted = Date()
             let prepared = try await prepare(item: currentItem, client: client)
+            diag("timing", "prepare \(diagElapsed(prepStarted)) pages=\(prepared.pageCount)")
             adopt(item: currentItem, source: prepared, startPage: startPage)
+            let warmStarted = Date()
             await warmVisiblePages()
+            diag("timing", "warmVisible \(diagElapsed(warmStarted))")
             isLoading = false
+            diag("timing", "open ready \(diagElapsed(started))")
         } catch {
             errorMessage = Self.message(for: error)
             isLoading = false
@@ -134,6 +142,7 @@ final class ReaderModel: ObservableObject {
 
     /// Local-file path: no WebDAV client, read straight off disk.
     func startLocal(startPage: Int) async {
+        let started = Date()
         isLoading = true
         errorMessage = nil
         chapterError = nil
@@ -141,10 +150,13 @@ final class ReaderModel: ObservableObject {
         seriesIndex = 0
 
         do {
+            let prepStarted = Date()
             let prepared = try await prepareLocal(item: currentItem)
+            diag("timing", "prepareLocal \(diagElapsed(prepStarted)) pages=\(prepared.pageCount)")
             adopt(item: currentItem, source: prepared, startPage: startPage)
             await warmVisiblePages()
             isLoading = false
+            diag("timing", "open local ready \(diagElapsed(started))")
         } catch {
             errorMessage = Self.message(for: error)
             isLoading = false
@@ -513,15 +525,20 @@ final class ReaderModel: ObservableObject {
 
     private func decode(position: Int, source: ComicPageSource, key: NSNumber) async -> UIImage? {
         do {
+            let ioStarted = Date()
             let data = try await source.pageData(at: position)
+            let ioCost = diagElapsed(ioStarted)
             let wantsEnhance = enhance
             let useAI = wantsEnhance && ImageEnhancer.hasAIModel
+            let decodeStarted = Date()
             let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
                 guard let base = ImageDecoder.downsample(data) else { return nil }
                 if useAI { return base }                     // AI gets the clean decode
                 guard wantsEnhance else { return base }
                 return ImageEnhancer.enhance(base) ?? base
             }.value
+            let outSize = decoded.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "nil"
+            diag("decode", "p\(position + 1) io=\(ioCost) \(diagBytes(data.count)) dec=\(diagElapsed(decodeStarted)) out=\(outSize) enh=\(wantsEnhance)")
 
             // AI super-resolution on top of the clean decode. Slow (seconds per
             // page) — acceptable because it only runs when enhance is on.

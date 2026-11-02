@@ -71,6 +71,7 @@ struct ComicPageView: View {
         failed = false
         if let loaded = await model.image(at: index) {
             image = loaded
+            diag("paint", "paged p\(index + 1)/\(model.pageCount) ready")
         } else {
             failed = true
         }

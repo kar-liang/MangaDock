@@ -113,3 +113,68 @@ final class DiagLog: ObservableObject {
 func diag(_ category: String, _ text: @autoclosure () -> String) {
     DiagLog.shared.log(category, text())
 }
+
+// MARK: - Timing helpers
+
+/// 从某个时间点到现在的毫秒数，日志里的耗时字段统一用它。
+func diagElapsed(_ since: Date) -> String {
+    "\(Int(Date().timeIntervalSince(since) * 1000))ms"
+}
+
+/// 字节数的人类可读形式。网络日志里 1200000 不如 1.2MB 直观。
+func diagBytes(_ count: Int) -> String {
+    let kb = Double(count) / 1024
+    if kb < 1 { return "\(count)B" }
+    if kb < 1024 { return String(format: "%.0fKB", kb) }
+    return String(format: "%.1fMB", kb / 1024)
+}
+
+/// 在非主线程 / 非 MainActor 上下文里记日志（网络层、解码层都在后台）。
+///
+/// `diag` 是 `@MainActor` 的，跨 actor 直接 await 会把请求路径拖慢一个 hop，
+/// 所以这里 fire-and-forget：日志顺序可能差个几毫秒，但绝不影响请求本身。
+func diagAsync(_ category: String, _ text: @autoclosure @escaping () -> String) {
+    guard DiagLog.shared.isEnabled else { return }
+    Task { @MainActor in
+        DiagLog.shared.log(category, text())
+    }
+}
+
+// MARK: - Crash / memory
+
+extension DiagLog {
+    /// 「这一轮 App 还活着」的标记。
+    /// 崩溃或被系统强杀时没人来清它，下次启动看到它还在 = 上次是异常退出。
+    static let sessionKey = "mangadock.diagnostics.sessionActive"
+
+    /// 启动时调一次：判断上一轮是不是正常结束的。
+    @MainActor
+    static func markSessionStart() {
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: sessionKey) {
+            shared.log("crash", "上次未正常退出（崩溃、被系统回收，或强杀）· mem=\(memoryFootprint())")
+        }
+        defaults.set(true, forKey: sessionKey)
+        shared.log("app", "启动 · mem=\(memoryFootprint())")
+    }
+
+    /// 进后台时调：这一轮算正常收尾，把标记清掉。
+    static func markSessionClean() {
+        UserDefaults.standard.set(false, forKey: sessionKey)
+    }
+
+    /// 当前进程占用的物理内存。iPad mini 6 那种闪退基本都跟它有关，
+    /// 光看「崩了」没用，得知道崩的时候占了多少。
+    static func memoryFootprint() -> String {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size
+                                           / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return "?" }
+        return String(format: "%.0fMB", Double(info.phys_footprint) / 1024 / 1024)
+    }
+}

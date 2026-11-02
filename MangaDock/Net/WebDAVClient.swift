@@ -68,6 +68,7 @@ final class WebDAVClient: @unchecked Sendable {
     // MARK: - Listing
 
     func list(_ url: URL) async throws -> [WebDAVItem] {
+        let started = Date()
         let target = WebDAVItem.directoryURL(url)
         var request = makeRequest(url: target, method: "PROPFIND")
         request.setValue("1", forHTTPHeaderField: "Depth")
@@ -76,6 +77,7 @@ final class WebDAVClient: @unchecked Sendable {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
+        trace("PROPFIND", target, status: http.statusCode, from: started, bytes: data.count)
         let accepted = (200...299).contains(http.statusCode) || http.statusCode == 207
         guard accepted else { throw WebDAVError.badStatus(http.statusCode) }
         guard !data.isEmpty else { throw WebDAVError.emptyResponse }
@@ -119,12 +121,30 @@ final class WebDAVClient: @unchecked Sendable {
 
     // MARK: - Fetching
 
+    /// 统一的网络日志：`方法 路径 状态 耗时 大小`。
+    /// 只记路径不记 query / 完整 host —— 日志要能贴出来，别带账号信息。
+    private func trace(_ method: String, _ url: URL, status: Int?, from: Date, bytes: Int?) {
+        guard DiagLog.shared.isEnabled else { return }
+        var parts = ["\(method) \(url.path.isEmpty ? "/" : url.path)",
+                     status.map(String.init) ?? "FAIL",
+                     diagElapsed(from)]
+        if let bytes { parts.append(diagBytes(bytes)) }
+        diagAsync("net", parts.joined(separator: " "))
+    }
+
     func data(for url: URL) async throws -> Data {
+        let started = Date()
         let request = makeRequest(url: url, method: "GET")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
-        guard (200...299).contains(http.statusCode) else { throw WebDAVError.badStatus(http.statusCode) }
-        return data
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
+            trace("GET", url, status: http.statusCode, from: started, bytes: data.count)
+            guard (200...299).contains(http.statusCode) else { throw WebDAVError.badStatus(http.statusCode) }
+            return data
+        } catch {
+            trace("GET", url, status: nil, from: started, bytes: nil)
+            throw error
+        }
     }
 
     /// PUT a file (used for the multi-device sync payload and cover images).
@@ -152,12 +172,17 @@ final class WebDAVClient: @unchecked Sendable {
 
     func download(_ url: URL, to destination: URL,
                   progress: @escaping @Sendable (Double) -> Void) async throws {
+        let started = Date()
         let request = makeRequest(url: url, method: "GET")
         let reporter = DownloadProgressDelegate(onProgress: progress)
 
         let (temporaryURL, response) = try await session.download(for: request, delegate: reporter)
         guard let http = response as? HTTPURLResponse else { throw WebDAVError.emptyResponse }
         guard (200...299).contains(http.statusCode) else { throw WebDAVError.badStatus(http.statusCode) }
+
+        let attrs = try? FileManager.default.attributesOfItem(atPath: temporaryURL.path)
+        let size = attrs?[.size] as? Int
+        trace("GET(whole)", url, status: http.statusCode, from: started, bytes: size)
 
         let manager = FileManager.default
         try manager.createDirectory(at: destination.deletingLastPathComponent(),
@@ -171,12 +196,23 @@ final class WebDAVClient: @unchecked Sendable {
     /// Fetches a byte range. Returns nil when the server ignores Range (answers 200
     /// with the whole file) — callers then fall back instead of buffering 50 MB.
     func data(_ url: URL, byteRange: ClosedRange<Int64>) async throws -> Data? {
+        let started = Date()
         var request = makeRequest(url: url, method: "GET")
         request.setValue("bytes=\(byteRange.lowerBound)-\(byteRange.upperBound)",
                          forHTTPHeaderField: "Range")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 206 else { return nil }
-        return data
+        do {
+            let (data, response) = try await session.data(for: request)
+            let http = response as? HTTPURLResponse
+            let code = http?.statusCode ?? -1
+            // 206 = 服务器认了 Range；200 = 忽略了 Range（调用方会回退整包）
+            trace("GET(rng \(diagBytes(byteRange.upperBound - byteRange.lowerBound + 1)))",
+                  url, status: code, from: started, bytes: data.count)
+            guard let http, http.statusCode == 206 else { return nil }
+            return data
+        } catch {
+            trace("GET(rng)", url, status: nil, from: started, bytes: nil)
+            throw error
+        }
     }
 
     func contentLength(_ url: URL) async throws -> Int64? {

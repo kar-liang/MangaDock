@@ -314,6 +314,7 @@ struct WebtoonReaderView: UIViewRepresentable {
                 }
                 self.pageViews[index].image = image
                 self.loadedPages.insert(index)
+                diagAsync("paint", "webtoon p\(index + 1)/\(self.pageCount) ready")
 
                 // 用图片真实尺寸算精确宽高比（不依赖 model 的 pageAspects，
                 // 它可能因 decode 时序滞后导致估算高度留黑边），变化则重排。
