@@ -10,6 +10,8 @@ struct FilesView: View {
     @State private var toast: String?
     /// 两套都配了时，用分段控件切换看哪一套
     @State private var activeKind: ServerKind = .webdav
+    /// 「添加服务器」向导。原来占着底栏一个标签位，现在收到这里。
+    @State private var showImport = false
 
     private var folderKey: String {
         store.baseURL(for: activeKind)?.absoluteString ?? "files"
@@ -42,6 +44,23 @@ struct FilesView: View {
                 }
             }
             .navigationTitle("文件")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showImport = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("添加服务器")
+                }
+            }
+            .sheet(isPresented: $showImport) {
+                ImportFlowView {
+                    // 存好一套配置后直接切过去看库，不用再手动点分段控件。
+                    if store.isReady(store.serverKind) { activeKind = store.serverKind }
+                    Task { await reload() }
+                }
+            }
             .libraryNavigation()
             .task {
                 // 默认跟着「当前激活的源」；只配了一套就选那一套
