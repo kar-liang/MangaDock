@@ -54,15 +54,15 @@ struct HistoryView: View {
             .navigationDestination(for: NavTarget.self) { target in
                 switch target {
                 case .folder(let item):
-                    BrowserView(folder: item)
+                    BrowserView(folder: item).hidesRootBar()
                 case .series(let item):
-                    SeriesView(folder: item)
+                    SeriesView(folder: item).hidesRootBar()
                 case .comic(let item):
-                    ReaderView(item: item)
+                    ReaderView(item: item).hidesRootBar()
                 case .privateShelf:
-                    PrivateShelfView()
+                    PrivateShelfView().hidesRootBar()
                 case .localLibrary:
-                    LocalLibraryView()
+                    LocalLibraryView().hidesRootBar()
                 }
             }
             .confirmationDialog("清空全部阅读记录？", isPresented: $showClearConfirm, titleVisibility: .visible) {

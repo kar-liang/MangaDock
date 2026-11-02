@@ -96,18 +96,39 @@ struct LibraryNavigationModifier: ViewModifier {
         content.navigationDestination(for: NavTarget.self) { target in
             switch target {
             case .folder(let item):
-                BrowserView(folder: item)
+                BrowserView(folder: item).hidesRootBar()
             case .series(let item):
-                SeriesView(folder: item)
+                SeriesView(folder: item).hidesRootBar()
             case .comic(let item):
-                ReaderView(item: item)
+                ReaderView(item: item).hidesRootBar()
             case .privateShelf:
-                PrivateShelfView()
+                PrivateShelfView().hidesRootBar()
             case .localLibrary:
-                LocalLibraryView()
+                LocalLibraryView().hidesRootBar()
             }
         }
     }
+}
+
+// MARK: - Root bar hiding
+
+/// 推到二级页面时把根界面的自绘底栏收起来。
+///
+/// 系统 tab bar 只要 `hidesBottomBarWhenPushed` 就自动隐藏，**自绘底栏没有这个待遇** ——
+/// 它挂在根视图上，导航栈压上来几层它都不知道。所以让每个二级页面自己上报。
+struct RootBarHidingModifier: ViewModifier {
+    @EnvironmentObject private var store: AppStore
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { store.immersiveDepth += 1 }
+            .onDisappear { store.immersiveDepth = max(0, store.immersiveDepth - 1) }
+    }
+}
+
+extension View {
+    /// 一级页面用不到；凡是通过 `navigationDestination` 推出来的页面都套上。
+    func hidesRootBar() -> some View { modifier(RootBarHidingModifier()) }
 }
 
 extension View {
@@ -151,10 +172,12 @@ extension View {
         }
     }
 
+    /// 底栏的圆按钮：用 `.clear` 而不是 `.regular` —— regular 的磨砂感太重，
+    /// clear 才透得过去。`.interactive()` 让玻璃本身对手指有反应（按下去会形变）。
     @ViewBuilder
     func glassCircle() -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: Circle())
+            self.glassEffect(.clear.interactive(), in: Circle())
         } else {
             self.background(.ultraThinMaterial, in: Circle())
         }
@@ -163,7 +186,7 @@ extension View {
     @ViewBuilder
     func glassCapsule() -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: Capsule())
+            self.glassEffect(.clear.interactive(), in: Capsule())
         } else {
             self.background(.ultraThinMaterial, in: Capsule())
         }

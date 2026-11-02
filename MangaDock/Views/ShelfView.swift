@@ -47,7 +47,7 @@ struct ShelfView: View {
                 WebComicReaderView(source: source)
             }
             .navigationDestination(item: $showingChapters) { source in
-                WebComicChapterListView(source: source)
+                WebComicChapterListView(source: source).hidesRootBar()
             }
         }
     }

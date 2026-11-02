@@ -24,9 +24,9 @@ enum RootTab: Hashable {
 /// 根界面：左侧胶囊装页面按钮，右侧独立一个 ➕ 开导入向导。
 ///
 /// 为什么不用 TabView：系统的 tab bar 只能排成一行等宽项，做不出
-/// 「三个挤在左边胶囊里、➕ 单独漂在右边」这种分裂布局。所以底栏整个自绘，
-/// 页面容器也自己管 —— 代价是 `.toolbar(.hidden, for: .tabBar)` 对自绘底栏无效，
-/// 阅读器得靠 `store.readerDepth` 上报，见 ReaderView。
+/// 「三个挤在左边胶囊里、➕ 单独漂在右边」这种分裂布局。代价是系统和底栏相关的
+/// 自动行为全得自己实现 —— 二级页面隐藏（`hidesRootBar()`）、长按滑动切页、
+/// 选中块的液态玻璃过渡，都在这个文件里。
 struct RootTabView: View {
     @EnvironmentObject private var store: AppStore
 
@@ -34,8 +34,6 @@ struct RootTabView: View {
     @AppStorage("mangadock.tab.files") private var showFiles = true
 
     @State private var selection: RootTab = .shelf
-    /// 选中高亮块在几个按钮之间滑动用的命名空间
-    @Namespace private var tabHighlight
     /// 访问过的页面。首次进入才构建，之后一直留在层级里 ——
     /// 切走再切回来，滚动位置和目录缓存都还在（跟 TabView 的行为对齐）。
     @State private var mounted: Set<RootTab> = [.shelf]
@@ -45,6 +43,21 @@ struct RootTabView: View {
     /// 这次弹窗里真的存了一套配置吗？存了就直接跳到「文件」看库
     @State private var didAddServer = false
 
+    /// 长按拖动中高亮块停在哪（松手才真正切页面）
+    @State private var hoverTab: RootTab?
+    /// 胶囊总宽（含内边距），把手指的 x 换算成第几个按钮要靠它
+    @State private var capsuleWidth: CGFloat = 0
+
+    @Namespace private var tabHighlight
+
+    private let barHeight: CGFloat = 62
+    /// 胶囊底边离屏幕物理底边的距离。
+    /// 原来挂在 safeAreaInset 里，等于「安全区 34 + 6」= 40pt，看着悬在半空。
+    /// 20pt 刚好压到 home indicator 上沿，跟系统 tab bar 的位置感一致。
+    private let barBottomGap: CGFloat = 20
+    /// 胶囊内边距（四周同值）
+    private let capsuleInset: CGFloat = 5
+
     private var visibleTabs: [RootTab] {
         var tabs: [RootTab] = []
         if showShelf { tabs.append(.shelf) }
@@ -53,22 +66,36 @@ struct RootTabView: View {
         return tabs
     }
 
-    /// 阅读器全屏时底栏让位
-    private var barHidden: Bool { store.readerDepth > 0 }
+    /// 二级页面压上来时让位
+    private var barHidden: Bool { store.immersiveDepth > 0 }
+
+    /// 高亮块跟着谁走：拖动中跟手指，否则跟选中项
+    private var highlightTab: RootTab { hoverTab ?? selection }
 
     var body: some View {
-        ZStack {
-            page(.shelf)
-            page(.files)
-            page(.settings)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !barHidden {
-                bottomBar
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+        GeometryReader { proxy in
+            // 底栏是 overlay（会贴到屏幕物理底边），列表的避让得
+            // 自己补：从「底栏视觉总高」里扣掉系统已经给的安全区。
+            let reserve = max(0, barHeight + barBottomGap - proxy.safeAreaInsets.bottom)
+
+            ZStack {
+                page(.shelf)
+                page(.files)
+                page(.settings)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: barHidden ? 0 : reserve)
+            }
+            .overlay(alignment: .bottom) {
+                if !barHidden {
+                    bottomBar
+                        .padding(.bottom, barBottomGap)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.22), value: barHidden)
         }
-        .animation(.easeInOut(duration: 0.22), value: barHidden)
         .sheet(isPresented: $showImport, onDismiss: {
             let target: RootTab = didAddServer ? .files : pendingTab
             didAddServer = false
@@ -114,27 +141,30 @@ struct RootTabView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            HStack(spacing: 0) {
-                ForEach(visibleTabs, id: \.self) { tab in
-                    tabButton(tab)
-                }
-            }
-            .padding(5)
-            .glassCapsule()
-            // 高亮块滑动的弹簧：跟系统 tab bar 的手感对齐（略带回弹、不拖泥带水）
-            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: selection)
-
+            tabCluster
             addButton
         }
         .frame(maxWidth: 520)
         .padding(.horizontal, 14)
-        .padding(.top, 4)
-        .padding(.bottom, 6)
         .frame(maxWidth: .infinity)
     }
 
+    private var tabCluster: some View {
+        HStack(spacing: 0) {
+            ForEach(visibleTabs, id: \.self) { tab in
+                tabButton(tab)
+            }
+        }
+        .padding(capsuleInset)
+        .glassCapsule()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { capsuleWidth = $0 }
+        // 系统 tab bar 长按后可以左右滑动切页，自绘的得自己接
+        .simultaneousGesture(scrubGesture)
+        .animation(highlightAnimation, value: highlightTab)
+    }
+
     private func tabButton(_ tab: RootTab) -> some View {
-        let active = selection == tab
+        let active = highlightTab == tab
         return Button {
             select(tab)
         } label: {
@@ -152,14 +182,15 @@ struct RootTabView: View {
                 if active {
                     RoundedRectangle(cornerRadius: 26, style: .continuous)
                         .fill(Color.primary.opacity(0.07))
-                        // 这一句就是「原生那种滑动」：高亮块不是简单地在旧位置消失、
-                        // 新位置冒出来，而是从上一个按钮一路滑过去。
+                        // 高亮块不是原地消失再冒出来，是从上一个按钮一路滑过去。
+                        // 拖动时它跟着手指走，靠的就是这块被反复插值。
                         .matchedGeometryEffect(id: "tabHighlight", in: tabHighlight)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 
     private var addButton: some View {
@@ -171,7 +202,7 @@ struct RootTabView: View {
             Image(systemName: "plus")
                 .font(.system(size: 22, weight: .medium))
                 .foregroundStyle(.primary)
-                .frame(width: 62, height: 62)
+                .frame(width: barHeight, height: barHeight)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -179,10 +210,48 @@ struct RootTabView: View {
         .glassCircle()
     }
 
+    /// 拖动时用短弹簧（跟手），松手后用长一点的（有回弹）
+    private var highlightAnimation: Animation {
+        hoverTab == nil
+            ? .spring(response: 0.34, dampingFraction: 0.86)
+            : .interactiveSpring(response: 0.16, dampingFraction: 0.9)
+    }
+
+    // MARK: - Long-press scrub
+
+    private var scrubGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.16)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                guard case .second(true, let drag?) = value else { return }
+                let next = tab(atX: drag.location.x)
+                if next != hoverTab {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    hoverTab = next
+                }
+            }
+            .onEnded { _ in
+                if let target = hoverTab { select(target) }
+                hoverTab = nil
+            }
+    }
+
+    private func tab(atX x: CGFloat) -> RootTab? {
+        let tabs = visibleTabs
+        let inner = capsuleWidth - capsuleInset * 2
+        guard !tabs.isEmpty, inner > 0 else { return nil }
+        let step = inner / CGFloat(tabs.count)
+        let index = Int(((x - capsuleInset) / step).rounded(.down))
+        return tabs[min(max(0, index), tabs.count - 1)]
+    }
+
     // MARK: - Selection
 
     private func select(_ tab: RootTab) {
         mounted.insert(tab)
+        // 兜底：万一某次 push/pop 的 onDisappear 漏了，计数会卡住让底栏再也不出现。
+        // 能点到 tab 就说明已经在根界面了，清零安全。
+        if store.immersiveDepth != 0 { store.immersiveDepth = 0 }
         guard selection != tab else { return }
         // 系统 tab bar 点击会有一记轻触感，自绘的得自己补
         UISelectionFeedbackGenerator().selectionChanged()
