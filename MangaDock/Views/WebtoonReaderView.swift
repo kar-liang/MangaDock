@@ -69,6 +69,9 @@ struct WebtoonReaderView: UIViewRepresentable {
             context.coordinator.layoutWidth = pageWidth
             context.coordinator.relayout()
         }
+        // 转圈是手动摆位置的，bounds 有值之后得校正一次 ——
+        // makeUIView 里拿到的 bounds 还是零，那一帧的定位（0,0）会把它扔到左上角看不见。
+        context.coordinator.refreshIndicator()
     }
 
     // MARK: - Coordinator
@@ -93,9 +96,8 @@ struct WebtoonReaderView: UIViewRepresentable {
         private var loadedPages: Set<Int> = []
         /// 正在加载的页任务，避免重复加载。
         private var loadingTasks: [Int: Task<Void, Never>] = [:]
-        /// 正在加载的页数。> 0 时显示转圈 —— 条漫是整章铺开、按页按需加载的，
-        /// 页还没回来之前那块就是纯黑，不给指示的话看着像卡死了。
-        private var pendingLoads = 0
+        /// 加载失败（拿不到图）的页。不记下来的话转圈会永远停不下来。
+        private var failedPages: Set<Int> = []
         /// 悬浮在可视区中心的转圈。不挂在某一页上：条漫单页可能比屏幕还高，
         /// 挂在页面中心的话转圈会跑到屏幕外面去。
         private var indicator: UIActivityIndicatorView?
@@ -119,6 +121,7 @@ struct WebtoonReaderView: UIViewRepresentable {
             loadedPages.removeAll()
             loadingTasks.values.forEach { $0.cancel() }
             loadingTasks.removeAll()
+            failedPages.removeAll()
 
             // 加载指示器：挂在 scrollView 上（不随内容滚走），位置每次由
             // positionIndicator() 摆到可视区中心。
@@ -130,7 +133,6 @@ struct WebtoonReaderView: UIViewRepresentable {
                 scroll.addSubview(ind)
                 indicator = ind
             }
-            pendingLoads = 0
             indicator?.stopAnimating()
 
             let count = pageCount
@@ -171,6 +173,11 @@ struct WebtoonReaderView: UIViewRepresentable {
             let footer: CGFloat = 300
             contentView.frame = CGRect(x: 0, y: 0, width: width, height: y + footer)
             scrollView.contentSize = CGSize(width: width, height: y + footer)
+
+            // 重排后可视范围变了，补一次按需加载。
+            // 首次进入时 pageWidth 是 0、relayout 直接 return，所有页都是零尺寸；
+            // 等宽度量出来再走到这里 —— 不补这一步就是「布局好了但一直不加载」，全黑且没有提示。
+            loadVisiblePages()
         }
 
         // MARK: - Page loading (on-demand)
@@ -212,10 +219,13 @@ struct WebtoonReaderView: UIViewRepresentable {
             if last >= pageCount - 1 {
                 parent.model.preloadNextChapterIfNeeded()
             }
+
+            refreshIndicator()
         }
 
         private func loadPage(_ index: Int) {
             guard index >= 0, index < pageCount else { return }
+            guard !failedPages.contains(index) else { return }
             guard !loadedPages.contains(index), loadingTasks[index] == nil else { return }
             guard pageViews[index].image == nil else {
                 loadedPages.insert(index)
@@ -224,12 +234,15 @@ struct WebtoonReaderView: UIViewRepresentable {
 
             loadingTasks[index] = Task { [weak self] in
                 guard let self else { return }
-                self.beginLoad()
                 let image = await self.parent.model.image(at: index)
-                self.endLoad()
                 guard !Task.isCancelled else { return }
                 self.loadingTasks[index] = nil
-                guard let image, index < self.pageViews.count else { return }
+                guard let image, index < self.pageViews.count else {
+                    // 拿不到图：记下来，别让它一直吊着转圈。
+                    self.failedPages.insert(index)
+                    self.refreshIndicator()
+                    return
+                }
                 self.pageViews[index].image = image
                 self.loadedPages.insert(index)
 
@@ -240,20 +253,42 @@ struct WebtoonReaderView: UIViewRepresentable {
                     self.layoutAspects[index] = newAspect
                     self.relayout()
                 }
+                self.refreshIndicator()
             }
         }
 
         // MARK: - Loading indicator
 
-        private func beginLoad() {
-            pendingLoads += 1
-            positionIndicator()
-            indicator?.startAnimating()
-        }
+        /// 只按「当前视口里有没有还没出图的页」来转圈。
+        ///
+        /// 早先按待加载任务计数，结果上下各一屏的预加载一直让计数 > 0，
+        /// 用户正常往下看已经加载好的页面时，屏幕中间那颗圈就没停过。
+        /// 预加载是后台行为，不该有前景提示。
+        func refreshIndicator() {
+            guard let scrollView, let ind = indicator else { return }
+            // 尺寸还没量出来时别定位，等下一轮 updateUIView 再来。
+            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
+            let zoom = max(scrollView.zoomScale, 0.0001)
+            let top = scrollView.contentOffset.y / zoom
+            let bottom = (scrollView.contentOffset.y + scrollView.bounds.height) / zoom
 
-        private func endLoad() {
-            pendingLoads = max(0, pendingLoads - 1)
-            if pendingLoads == 0 { indicator?.stopAnimating() }
+            var waiting = false
+            for i in 0..<pageViews.count {
+                let f = pageViews[i].frame
+                // 只算真正落在视口里的页
+                guard f.maxY > top, f.minY < bottom else { continue }
+                if pageViews[i].image == nil, !failedPages.contains(i) {
+                    waiting = true
+                    break
+                }
+            }
+
+            if waiting {
+                positionIndicator()
+                ind.startAnimating()
+            } else {
+                ind.stopAnimating()
+            }
         }
 
         /// 把转圈摆到当前可视区中心（contentOffset 走了它得跟着走）。
