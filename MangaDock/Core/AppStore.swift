@@ -433,6 +433,10 @@ final class AppStore: ObservableObject {
         let profile: ServerProfile
         var id: String { profile.id }
 
+        // ServerProfile 没实现 Hashable，这里按 id 判等就够了 —— 一个账号就是唯一一条。
+        static func == (lhs: AccountRef, rhs: AccountRef) -> Bool { lhs.id == rhs.id }
+        func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
         /// 显示名：填了就用，没填就用主机名，再不行用类型名。
         var title: String {
             let name = profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
