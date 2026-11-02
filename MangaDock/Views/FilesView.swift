@@ -8,30 +8,37 @@ struct FilesView: View {
     @ObservedObject private var shelf = ShelfStore.shared
     @State private var mode: LayoutMode = .grid
     @State private var toast: String?
-    /// 两套都配了时，用分段控件切换看哪一套
-    @State private var activeKind: ServerKind = .webdav
+    /// 当前看的是哪个账号。多账号之后这里存的是 profile id 而不是类型。
+    @State private var activeAccountID: String?
     /// 「添加服务器」向导。原来占着底栏一个标签位，现在收到这里。
     @State private var showImport = false
 
-    private var folderKey: String {
-        store.baseURL(for: activeKind)?.absoluteString ?? "files"
+    /// 全部账号（跨类型）。文件页的分段控件按这个列。
+    private var accounts: [AppStore.AccountRef] { store.allAccounts }
+
+    private var activeAccount: AppStore.AccountRef? {
+        accounts.first { $0.id == activeAccountID } ?? accounts.first
     }
 
-    /// 每套自己的显示名称（不能用 store.serverDisplayName，那只反映当前激活那套）
-    private func sourceTitle(_ kind: ServerKind) -> String {
-        let name = store.savedProfile(kind).displayName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty { return name }
-        return store.baseURL(for: kind)?.host ?? kind.title
+    private var folderKey: String {
+        activeAccount?.id ?? "files"
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if store.configuredKinds.count > 1 {
-                    Picker("来源", selection: $activeKind) {
-                        ForEach(store.configuredKinds) { kind in
-                            Text(kind.title).tag(kind)
+                if accounts.count > 1 {
+                    Picker("来源", selection: Binding(
+                        get: { activeAccount?.id ?? "" },
+                        set: { id in
+                            activeAccountID = id
+                            if let account = accounts.first(where: { $0.id == id }) {
+                                store.switchAccount(to: id, kind: account.kind)
+                            }
+                        }
+                    )) {
+                        ForEach(accounts) { account in
+                            Text(account.title).tag(account.id)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -57,29 +64,22 @@ struct FilesView: View {
             .sheet(isPresented: $showImport) {
                 ImportFlowView {
                     // 存好一套配置后直接切过去看库，不用再手动点分段控件。
-                    if store.isReady(store.serverKind) { activeKind = store.serverKind }
+                    if let newID = store.activeAccountID(store.serverKind) {
+                        activeAccountID = newID
+                    }
                     Task { await reload() }
                 }
             }
             .libraryNavigation()
             .task {
-                // 默认跟着「当前激活的源」；只配了一套就选那一套
-                if store.isReady(store.serverKind) {
-                    activeKind = store.serverKind
-                } else if let first = store.configuredKinds.first {
-                    activeKind = first
-                }
+                // 默认跟着「当前激活的账号」；没设过就用第一个
+                activeAccountID = store.activeAccountID(store.serverKind) ?? accounts.first?.id
                 await reload()
             }
             .onAppear { mode = LayoutPreference.shared.mode(for: folderKey) }
-            .onChange(of: activeKind) { _, _ in
+            .onChange(of: activeAccountID) { _, _ in
                 mode = LayoutPreference.shared.mode(for: folderKey)
                 Task { await reload() }
-            }
-            // 新加/切换了服务器：文件页跟着当前激活那套走
-            .onChange(of: store.serverKind) { _, newKind in
-                guard store.isReady(newKind) else { return }
-                activeKind = newKind
             }
             .onChange(of: shelf.lastMessage) { message in
                 guard let message else { return }
@@ -117,10 +117,10 @@ struct FilesView: View {
                     row(for: item)
                 }
             } header: {
-                Text(sourceTitle(activeKind))
+                Text(activeAccount?.title ?? "来源")
             } footer: {
                 if !loader.isLoading && loader.errorMessage == nil {
-                    Text("长按任意条目可以加入书架 · \(store.baseURL(for: activeKind)?.host ?? "")")
+                    Text("长按任意条目可以加入书架 · \(activeAccount?.title ?? "")")
                         .font(.caption2)
                 }
             }
@@ -152,7 +152,7 @@ struct FilesView: View {
                 } else if loader.items.isEmpty {
                     Text("这个目录是空的").foregroundColor(.secondary)
                 } else {
-                    Text(sourceTitle(activeKind))
+                    Text(activeAccount?.title ?? "来源")
                         .font(.subheadline.weight(.semibold))
 
                     LazyVGrid(columns: LibraryGrid.columns, spacing: 16) {
@@ -219,7 +219,7 @@ struct FilesView: View {
     }
 
     private func reload() async {
-        guard let root = store.rootURL(for: activeKind) else { return }
-        await loader.load(url: root, client: store.client(for: activeKind))
+        guard let account = activeAccount, let root = store.rootURL(for: account) else { return }
+        await loader.load(url: root, client: store.client(for: account))
     }
 }

@@ -1,16 +1,40 @@
 import Foundation
 import SwiftUI
 
-/// 一套服务器配置。WebDAV 和 Komga 各自独立存一份，互不覆盖。
+/// 一套服务器配置，也就是「一个账号」。
 ///
-/// 密码不进 UserDefaults，单独放 Keychain（account = 类型名），
+/// 同一类型（WebDAV / Komga）可以存多套，每套一个账号、一组地址。
+/// 密码不进 UserDefaults，单独放 Keychain（**account = id**），
 /// 所以这里的结构体里没有 password 字段。
-struct ServerProfile: Codable, Equatable {
+struct ServerProfile: Codable, Equatable, Identifiable {
+    /// 唯一标识，同时是 Keychain 的 account。
+    /// 旧版本存档没有这个字段，迁移时会被设成类型名（"webdav"），
+    /// 这样旧 Keychain 里的密码不需要搬动就能继续用。
+    var id: String = UUID().uuidString
     /// 显示名称（选填）。填了就用它当书架的标题。
     var displayName: String = ""
     /// 多行地址，每行一个（局域网 IP + 公网域名）
     var urls: String = ""
     var username: String = ""
+
+    init(id: String = UUID().uuidString,
+         displayName: String = "",
+         urls: String = "",
+         username: String = "") {
+        self.id = id
+        self.displayName = displayName
+        self.urls = urls
+        self.username = username
+    }
+
+    /// 旧存档没有 id 字段，解码时补一个。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? ""
+        urls = try container.decodeIfPresent(String.self, forKey: .urls) ?? ""
+        username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
+    }
 
     var isEmpty: Bool { lines.isEmpty }
 
@@ -31,9 +55,17 @@ final class AppStore: ObservableObject {
         static let username = "mangadock.username"
         static let recent = "mangadock.recent"
 
-        /// 每种后端一份独立的配置
+        /// 旧版本：每种后端只有一份配置（保留下来做迁移检测）
         static func profile(_ kind: ServerKind) -> String {
             "mangadock.profile.\(kind.rawValue)"
+        }
+        /// 新版本：每种后端一个账号列表
+        static func accounts(_ kind: ServerKind) -> String {
+            "mangadock.accounts.\(kind.rawValue)"
+        }
+        /// 该类型当前用的是哪个账号
+        static func activeAccount(_ kind: ServerKind) -> String {
+            "mangadock.activeAccount.\(kind.rawValue)"
         }
     }
 
@@ -64,17 +96,25 @@ final class AppStore: ObservableObject {
             }
         }
 
+        // 读当前账号：优先新版的账号列表，退回旧版单份配置。
+        // （真正的「旧→新」迁移在第一次调 profiles(for:) 时发生。）
         let initial: ServerProfile
-        if let data = d.data(forKey: Keys.profile(kind)),
-           let decoded = try? JSONDecoder().decode(ServerProfile.self, from: data) {
-            initial = decoded
+        if let data = d.data(forKey: Keys.accounts(kind)),
+           let list = try? JSONDecoder().decode([ServerProfile].self, from: data),
+           !list.isEmpty {
+            let activeID = d.string(forKey: Keys.activeAccount(kind))
+            initial = list.first(where: { $0.id == activeID }) ?? list[0]
+        } else if let data = d.data(forKey: Keys.profile(kind)),
+                  let single = try? JSONDecoder().decode(ServerProfile.self, from: data) {
+            initial = single
         } else {
             initial = ServerProfile()
         }
         serverDisplayName = initial.displayName
         serverURL = initial.urls
         username = initial.username
-        password = Keychain.load(account: kind.rawValue) ?? ""
+        // 旧存档的 id 是空的，密码还挂在类型名下面
+        password = Keychain.load(account: initial.id.isEmpty ? kind.rawValue : initial.id) ?? ""
         if let data = defaults.data(forKey: Keys.recent),
            let list = try? JSONDecoder().decode([RecentEntry].self, from: data) {
             recent = list
@@ -167,14 +207,35 @@ final class AppStore: ObservableObject {
     /// 按类型取客户端。凭据读那套自己的 profile —— 不受「当前激活的是谁」影响，
     /// 这样两套服务器可以同时在线，各自的条目用各自的 client。
     func client(for kind: ServerKind) -> RemoteClient? {
-        guard let base = baseURL(for: kind) else { return nil }
-        let profile = readProfile(kind)
-        let pass = Keychain.load(account: kind.rawValue) ?? ""
+        client(kind: kind, profile: readProfile(kind))
+    }
+
+    /// 用指定账号构造客户端。多账号下「这条目属于谁」靠它决定。
+    private func client(kind: ServerKind, profile: ServerProfile) -> RemoteClient? {
+        guard let base = baseURL(kind: kind, profile: profile) else { return nil }
+        let pass = Keychain.load(account: profile.id) ?? ""
         switch kind {
         case .webdav:
             return WebDAVClient(username: profile.username, password: pass, baseURL: base)
         case .komga:
             return KomgaClient(baseURL: base, username: profile.username, password: pass)
+        }
+    }
+
+    /// 某套配置的基地址。当前账号用探测过的结果，其他账号先取第一条地址。
+    private func baseURL(kind: ServerKind, profile: ServerProfile) -> URL? {
+        if profile.id == activeAccountID(kind), let cached = activeURLs[kind] { return cached }
+        return profile.lines.compactMap { Self.normalizedURL($0) }.first
+    }
+
+    /// WebDAV 的条目是真实的 http(s) 地址，靠 host 就能认出它属于哪个账号 ——
+    /// 两个账号挂不同域名/不同 IP 时，各自的条目走各自的凭据。
+    private func profileOwning(_ url: URL) -> ServerProfile? {
+        guard let host = url.host else { return nil }
+        return profiles(for: .webdav).first { profile in
+            profile.lines.contains { line in
+                Self.normalizedURL(line)?.host == host
+            }
         }
     }
 
@@ -185,7 +246,11 @@ final class AppStore: ObservableObject {
 
     /// 按条目 URL 取客户端 —— 两套并存的关键：谁家的条目用谁家的 client。
     func client(for url: URL) -> RemoteClient? {
-        client(for: kind(for: url))
+        let kind = kind(for: url)
+        if kind == .webdav, let owner = profileOwning(url) {
+            return client(kind: .webdav, profile: owner)
+        }
+        return client(for: kind)
     }
 
     /// 某套后端的根目录
@@ -332,17 +397,127 @@ final class AppStore: ObservableObject {
 
     // MARK: - Profiles
 
-    private func readProfile(_ kind: ServerKind) -> ServerProfile {
-        guard let data = defaults.data(forKey: Keys.profile(kind)),
-              let profile = try? JSONDecoder().decode(ServerProfile.self, from: data) else {
-            return ServerProfile()
+    // MARK: - Accounts (multi-account per kind)
+
+    /// 某个类型下保存的全部账号。
+    ///
+    /// 第一次读到旧版单份配置时会自动迁移成数组 —— 旧存档的 `id` 设成类型名
+    /// （"webdav" / "komga"），这样 Keychain 里原来那份密码不用搬就能接着用。
+    func profiles(for kind: ServerKind) -> [ServerProfile] {
+        if let data = defaults.data(forKey: Keys.accounts(kind)),
+           let list = try? JSONDecoder().decode([ServerProfile].self, from: data) {
+            return list
         }
-        return profile
+
+        // 迁移：老版本每种类型只存一个 ServerProfile
+        guard let legacyData = defaults.data(forKey: Keys.profile(kind)),
+              let legacy = try? JSONDecoder().decode(ServerProfile.self, from: legacyData),
+              !legacy.isEmpty else {
+            return []
+        }
+        var migrated = legacy
+        migrated.id = kind.rawValue
+        saveProfiles([migrated], kind: kind)
+        defaults.set(migrated.id, forKey: Keys.activeAccount(kind))
+        return [migrated]
     }
 
+    private func saveProfiles(_ list: [ServerProfile], kind: ServerKind) {
+        guard let data = try? JSONEncoder().encode(list) else { return }
+        defaults.set(data, forKey: Keys.accounts(kind))
+    }
+
+    /// 一个可选的账号（类型 + 配置）。文件页的分段控件按它列。
+    struct AccountRef: Identifiable, Hashable {
+        let kind: ServerKind
+        let profile: ServerProfile
+        var id: String { profile.id }
+
+        /// 显示名：填了就用，没填就用主机名，再不行用类型名。
+        var title: String {
+            let name = profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+            if let host = profile.lines.first.flatMap({ URL(string: $0)?.host }) { return host }
+            return kind.title
+        }
+    }
+
+    /// 所有已配置的账号，跨类型。
+    var allAccounts: [AccountRef] {
+        ServerKind.allCases.flatMap { kind in
+            profiles(for: kind).map { AccountRef(kind: kind, profile: $0) }
+        }
+    }
+
+    /// 按账号构造客户端（文件页切换源时用）。
+    func client(for account: AccountRef) -> RemoteClient? {
+        client(kind: account.kind, profile: account.profile)
+    }
+
+    /// 某个账号的根目录。
+    func rootURL(for account: AccountRef) -> URL? {
+        switch account.kind {
+        case .webdav:
+            return baseURL(kind: .webdav, profile: account.profile)
+                .map { WebDAVItem.directoryURL($0) }
+        case .komga:
+            return URL(string: "komga://root")
+        }
+    }
+
+    /// 当前使用中的账号 id
+    func activeAccountID(_ kind: ServerKind) -> String? {
+        let list = profiles(for: kind)
+        let stored = defaults.string(forKey: Keys.activeAccount(kind))
+        if let stored, list.contains(where: { $0.id == stored }) { return stored }
+        return list.first?.id
+    }
+
+    /// 当前使用中的那套配置（没有就返回空 profile）。
+    private func readProfile(_ kind: ServerKind) -> ServerProfile {
+        let list = profiles(for: kind)
+        guard let id = activeAccountID(kind), let hit = list.first(where: { $0.id == id }) else {
+            return list.first ?? ServerProfile()
+        }
+        return hit
+    }
+
+    /// 写回某套配置（按 id 覆盖，找不到就追加）。
     private func writeProfile(_ profile: ServerProfile, kind: ServerKind) {
-        guard let data = try? JSONEncoder().encode(profile) else { return }
-        defaults.set(data, forKey: Keys.profile(kind))
+        var list = profiles(for: kind)
+        if let index = list.firstIndex(where: { $0.id == profile.id }) {
+            list[index] = profile
+        } else {
+            list.append(profile)
+        }
+        saveProfiles(list, kind: kind)
+    }
+
+    /// 切到这个类型的另一个账号。会先把当前账号的改动存下来。
+    func switchAccount(to id: String, kind: ServerKind) {
+        guard id != activeAccountID(kind) else { return }
+        persistActiveProfile()               // 先把当前账号的输入存好
+        defaults.set(id, forKey: Keys.activeAccount(kind))
+        serverKindRaw = kind.rawValue
+        loadActiveProfile(kind)
+        activeURLs[kind] = nil               // 让地址重新探测
+        Task { await probeServers() }
+    }
+
+    /// 删掉一个账号。删的是当前账号时，自动切到剩下的第一个。
+    func deleteAccount(_ id: String, kind: ServerKind) {
+        var list = profiles(for: kind)
+        guard list.count > 1 else { return }   // 至少留一个，不然整个 App 会掉回首次设置页
+        guard let index = list.firstIndex(where: { $0.id == id }) else { return }
+        list.remove(at: index)
+        saveProfiles(list, kind: kind)
+        Keychain.save("", account: id)
+
+        if defaults.string(forKey: Keys.activeAccount(kind)) == id {
+            let next = list[0].id
+            defaults.set(next, forKey: Keys.activeAccount(kind))
+            if kind == serverKind { loadActiveProfile(kind) }
+        }
     }
 
     /// 已保存的配置（给设置页和导入向导判断「这套配过没有」）。
@@ -361,7 +536,7 @@ final class AppStore: ObservableObject {
         profile.urls = serverURL
         profile.username = username
         writeProfile(profile, kind: serverKind)
-        Keychain.save(password, account: serverKind.rawValue)
+        Keychain.save(password, account: profile.id)
     }
 
     /// 从指定类型的存档载入内存。
@@ -370,15 +545,31 @@ final class AppStore: ObservableObject {
         serverDisplayName = profile.displayName
         serverURL = profile.urls
         username = profile.username
-        password = Keychain.load(account: kind.rawValue) ?? ""
+        password = Keychain.load(account: profile.id) ?? ""
     }
 
-    /// 导入向导专用：一次写入某类型的配置并切过去。
+    /// 导入向导专用：**新建**一个账号并切过去。
+    ///
+    /// 注意是新建不是覆盖 —— 同一个类型下可以有多个账号（不同服务器 / 不同人），
+    /// 想改现有账号请走设置页的「保存」（那个才写回当前账号）。
     func activate(kind: ServerKind, displayName: String,
                   serverURL: String, username: String, password: String) {
-        if kind != serverKind { serverKind = kind }
-        save(serverURL: serverURL, username: username, password: password,
-             displayName: displayName)
+        var cleaned = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while cleaned.hasSuffix("/") && cleaned.count > 8 { cleaned.removeLast() }
+
+        let profile = ServerProfile(displayName: displayName,
+                                    urls: cleaned,
+                                    username: username)
+        writeProfile(profile, kind: kind)
+        Keychain.save(password, account: profile.id)
+        defaults.set(profile.id, forKey: Keys.activeAccount(kind))
+
+        if kind != serverKind { serverKindRaw = kind.rawValue }
+        serverDisplayName = displayName
+        self.serverURL = cleaned
+        self.username = username
+        self.password = password
+        activeURLs[kind] = nil
     }
 
     // MARK: - Mutations
@@ -399,7 +590,7 @@ final class AppStore: ObservableObject {
         profile.username = username
         profile.displayName = serverDisplayName
         writeProfile(profile, kind: serverKind)
-        Keychain.save(password, account: serverKind.rawValue)
+        Keychain.save(password, account: profile.id)
 
         // 旧版本的单配置文件顺手同步一份，回退旧版本时还能读到
         defaults.set(cleaned, forKey: Keys.serverURL)
@@ -412,10 +603,13 @@ final class AppStore: ObservableObject {
         username = ""
         password = ""
         serverDisplayName = ""
-        defaults.removeObject(forKey: Keys.profile(serverKind))
+        let current = readProfile(serverKind)
+        var list = profiles(for: serverKind)
+        list.removeAll { $0.id == current.id }
+        saveProfiles(list, kind: serverKind)
+        Keychain.save("", account: current.id)
         defaults.removeObject(forKey: Keys.serverURL)
         defaults.removeObject(forKey: Keys.username)
-        Keychain.save("", account: serverKind.rawValue)
         activeURLs[serverKind] = nil
         setLastGood(nil, for: serverKind)
     }

@@ -23,8 +23,51 @@ struct ServerSettingsView: View {
     @State private var diagRunning = false
     @State private var confirmClearServer = false
 
+    /// 把 store 当前账号的值刷回输入框（切换账号后调）。
+    private func syncFields() {
+        displayName = store.serverDisplayName
+        serverURL = store.serverURL
+        username = store.username
+        password = store.password
+    }
+
     var body: some View {
         Form {
+            if !initialSetup {
+                Section {
+                    ForEach(store.profiles(for: store.serverKind)) { profile in
+                        Button {
+                            store.switchAccount(to: profile.id, kind: store.serverKind)
+                            syncFields()
+                        } label: {
+                            HStack {
+                                Text(profile.displayName.isEmpty
+                                     ? (profile.lines.first ?? "未命名账号")
+                                     : profile.displayName)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                if profile.id == store.activeAccountID(store.serverKind) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.accentColor)
+                                }
+                            }
+                        }
+                        .swipeActions {
+                            if store.profiles(for: store.serverKind).count > 1 {
+                                Button("删除", role: .destructive) {
+                                    store.deleteAccount(profile.id, kind: store.serverKind)
+                                    syncFields()
+                                }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("\(store.serverKind.title) 账号")
+                } footer: {
+                    Text("点一下切换，左滑删除。要再添一个账号，去「文件」页右上角 ＋ 走导入向导。\n两个账号的地址（域名或 IP）不同时，各自的漫画会自动用各自的凭据。")
+                }
+            }
+
             Section {
                 Picker("类型", selection: Binding(
                     get: { store.serverKind },
