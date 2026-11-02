@@ -53,9 +53,14 @@ struct ComicPageView: View {
                 .tint(.white)
             }
         } else {
-            ProgressView()
-                .progressViewStyle(.circular)
-                .tint(.white)
+            VStack(spacing: 12) {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(.white)
+                Text("正在加载 第 \(index + 1) / \(model.pageCount) 页")
+                    .font(.footnote)
+                    .foregroundColor(.white.opacity(0.85))
+            }
         }
     }
 
