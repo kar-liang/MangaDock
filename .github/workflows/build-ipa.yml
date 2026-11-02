@@ -65,12 +65,30 @@ jobs:
           VERSION=$(grep 'MARKETING_VERSION' project.yml | head -1 | awk -F'"' '{print $2}')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      # Release 说明来自 CHANGELOG.md 的最新一节 —— 只维护一处，CI 和 QQ 通知都读它。
+      - name: Extract release notes
+        run: |
+          set -e
+          {
+            awk '/^## /{n++} n==1{print} n==2{exit}' CHANGELOG.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "**安装**：下载 \`MangaDock.ipa\`，用 SideStore / AltStore / LiveContainer 侧载。要求 iOS 18+。"
+            echo ""
+            echo "\`\`\`"
+            echo "版本 ${{ steps.version.outputs.version }} · 构建号见包内 Info.plist"
+            echo "\`\`\`"
+          } > notes.md
+          echo "--- notes.md ---"
+          cat notes.md
+
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: MangaDock ${{ steps.version.outputs.version }}
-          body: 自动构建产物（由 Build IPA workflow 生成）。下载 MangaDock.ipa 用 SideStore / AltStore / LiveContainer 侧载，要求 iOS 18+。
+          body_path: notes.md
           files: MangaDock.ipa
           overwrite_files: true
 
