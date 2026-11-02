@@ -205,7 +205,7 @@ final class WebDAVClient: @unchecked Sendable {
             let http = response as? HTTPURLResponse
             let code = http?.statusCode ?? -1
             // 206 = 服务器认了 Range；200 = 忽略了 Range（调用方会回退整包）
-            trace("GET(rng \(diagBytes(byteRange.upperBound - byteRange.lowerBound + 1)))",
+            trace("GET(rng \(diagBytes(Int(byteRange.upperBound - byteRange.lowerBound + 1))))",
                   url, status: code, from: started, bytes: data.count)
             guard let http, http.statusCode == 206 else { return nil }
             return data
