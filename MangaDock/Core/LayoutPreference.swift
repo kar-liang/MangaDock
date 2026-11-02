@@ -108,4 +108,11 @@ enum ServerKind: String, CaseIterable, Identifiable {
         case .komga: return "读 Komga 的书库，封面和分类由 Komga 管理"
         }
     }
+
+    var icon: String {
+        switch self {
+        case .webdav: return "externaldrive.connected.to.line.below"
+        case .komga: return "books.vertical.fill"
+        }
+    }
 }

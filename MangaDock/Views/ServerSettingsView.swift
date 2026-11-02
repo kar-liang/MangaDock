@@ -9,9 +9,12 @@ struct ServerSettingsView: View {
 
     @EnvironmentObject private var store: AppStore
 
+    @State private var displayName = ""
     @State private var serverURL = ""
     @State private var username = ""
     @State private var password = ""
+    /// 用户点了「还没配过」的类型：不直接切，先带他去填表
+    @State private var pendingKind: ServerKind?
     @State private var isTesting = false
     @State private var message: String?
     @State private var isError = false
@@ -25,12 +28,23 @@ struct ServerSettingsView: View {
             Section {
                 Picker("类型", selection: Binding(
                     get: { store.serverKind },
-                    set: { store.serverKind = $0 }
+                    set: { kind in
+                        guard kind != store.serverKind else { return }
+                        if store.hasProfile(kind) {
+                            store.serverKind = kind
+                        } else {
+                            // 这套还没配过。直接切过去会变成空配置，整个 App
+                            // 会跳回首次设置页 —— 所以先把人带到填写表单。
+                            pendingKind = kind
+                        }
+                    }
                 )) {
                     ForEach(ServerKind.allCases) { kind in
-                        Text(kind.title).tag(kind)
+                        Text(store.hasProfile(kind) ? kind.title : "\(kind.title)（未配置）")
+                            .tag(kind)
                     }
                 }
+                TextField("显示名称（选填）", text: $displayName)
                 TextField(store.serverKind == .komga
                           ? "如 https://komga.example.com"
                           : "每行一个地址，如 http://192.168.1.10:5005/dav/Comics",
@@ -69,7 +83,7 @@ struct ServerSettingsView: View {
                         .foregroundColor(isError ? .red : .green)
                 }
 
-                Button("清除 WebDAV 配置", role: .destructive) {
+                Button("清除 \(store.serverKind.title) 配置", role: .destructive) {
                     confirmClearServer = true
                 }
             }
@@ -106,15 +120,21 @@ struct ServerSettingsView: View {
                 }
             }
         }
-        .navigationTitle(initialSetup ? "连接 WebDAV" : "WebDAV 服务器")
+        .navigationTitle(initialSetup ? "连接 \(store.serverKind.title)" : "服务器")
         .navigationBarTitleDisplayMode(initialSetup ? .large : .inline)
         // No .libraryNavigation() here: this screen is pushed from
         // SettingsHomeView, and registering the same destinations twice breaks
         // pushes (see the 1.7.1 fix).
         .onAppear(perform: loadExisting)
-        .confirmationDialog("清除 WebDAV 配置？", isPresented: $confirmClearServer, titleVisibility: .visible) {
+        .onChange(of: store.serverKind) { _, _ in syncFromStore() }
+        .sheet(item: $pendingKind) { kind in
+            KindSetupSheet(kind: kind)
+                .environmentObject(store)
+        }
+        .confirmationDialog("清除 \(store.serverKind.title) 配置？", isPresented: $confirmClearServer, titleVisibility: .visible) {
             Button("清除", role: .destructive) {
                 store.clearConfiguration()
+                displayName = ""
                 serverURL = ""
                 username = ""
                 password = ""
@@ -122,16 +142,22 @@ struct ServerSettingsView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("清除后回到首次连接页面，本地缓存和阅读记录不受影响。")
+            Text("只清除 \(store.serverKind.title) 这一套地址和账号，另一套配置、本地缓存和阅读记录都不受影响。")
         }
     }
 
     private func loadExisting() {
         guard !loaded else { return }
         loaded = true
+        syncFromStore()
+    }
+
+    private func syncFromStore() {
+        displayName = store.serverDisplayName
         serverURL = store.serverURL
         username = store.username
         password = store.password
+        message = nil
     }
 
     private func runDiagnostics() async {
@@ -174,7 +200,8 @@ struct ServerSettingsView: View {
         }
 
         if ok > 0 {
-            store.save(serverURL: serverURL, username: username, password: password)
+            store.save(serverURL: serverURL, username: username, password: password,
+                       displayName: displayName)
             let suffix = failures.isEmpty ? "" : "（\(failures.count) 个连不上）"
             message = "\(ok) 个地址可用\(suffix)"
             isError = false
@@ -183,5 +210,25 @@ struct ServerSettingsView: View {
             isError = true
         }
         isTesting = false
+    }
+}
+
+/// 从设置页直接给「还没配过」的类型补配置时用的小弹窗。
+private struct KindSetupSheet: View {
+    let kind: ServerKind
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ServerFormView(kind: kind) { dismiss() }
+                .navigationTitle("添加 \(kind.title)")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("取消") { dismiss() }
+                    }
+                }
+        }
     }
 }

@@ -15,12 +15,12 @@ struct SettingsHomeView: View {
                 NavigationLink {
                     ServerSettingsView(initialSetup: false)
                 } label: {
-                    row(icon: "externaldrive.connected.to.line.below",
-                        title: "WebDAV 服务器",
+                    row(icon: store.serverKind.icon,
+                        title: "\(store.serverKind.title) 服务器",
                         detail: serverSummary)
                 }
             } footer: {
-                Text("服务器地址、账号密码、连接诊断都在这里。")
+                Text("当前使用 WebDAV 还是 Komga、地址和账号、连接诊断都在这里。两套配置分开保存。")
             }
 
             Section {
@@ -77,7 +77,8 @@ struct SettingsHomeView: View {
 
     private var serverSummary: String {
         guard let host = store.baseURL?.host else { return "未配置" }
-        return host
+        let name = store.serverDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? host : "\(name) · \(host)"
     }
 
     private var downloadSummary: String {

@@ -1,6 +1,26 @@
 import Foundation
 import SwiftUI
 
+/// 一套服务器配置。WebDAV 和 Komga 各自独立存一份，互不覆盖。
+///
+/// 密码不进 UserDefaults，单独放 Keychain（account = 类型名），
+/// 所以这里的结构体里没有 password 字段。
+struct ServerProfile: Codable, Equatable {
+    /// 显示名称（选填）。填了就用它当书架的标题。
+    var displayName: String = ""
+    /// 多行地址，每行一个（局域网 IP + 公网域名）
+    var urls: String = ""
+    var username: String = ""
+
+    var isEmpty: Bool { lines.isEmpty }
+
+    var lines: [String] {
+        urls.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
 @MainActor
 final class AppStore: ObservableObject {
     private let defaults = UserDefaults.standard
@@ -10,20 +30,51 @@ final class AppStore: ObservableObject {
         static let serverKind = "mangadock.serverKind"
         static let username = "mangadock.username"
         static let recent = "mangadock.recent"
+
+        /// 每种后端一份独立的配置
+        static func profile(_ kind: ServerKind) -> String {
+            "mangadock.profile.\(kind.rawValue)"
+        }
     }
 
     @Published var serverURL: String
     @Published var username: String
     @Published var password: String
+    /// 显示名称（选填，抽屉/书架标题会用它）
+    @Published var serverDisplayName: String
     @Published var recent: [RecentEntry]
     /// 后端类型：WebDAV 目录树，或者 Komga 的 REST API
     @Published var serverKindRaw: String
 
     init() {
-        serverURL = defaults.string(forKey: Keys.serverURL) ?? ""
-        serverKindRaw = defaults.string(forKey: Keys.serverKind) ?? ServerKind.webdav.rawValue
-        username = defaults.string(forKey: Keys.username) ?? ""
-        password = Keychain.load(account: "webdav") ?? ""
+        let d = UserDefaults.standard
+        let kind = ServerKind(rawValue: d.string(forKey: Keys.serverKind) ?? "") ?? .webdav
+        serverKindRaw = kind.rawValue
+
+        // 老版本只有一套配置（mangadock.serverURL + Keychain "webdav"）。
+        // 第一次跑新版本时把它搬进 WebDAV 档案 —— 否则升级完配置会凭空消失。
+        if d.data(forKey: Keys.profile(.webdav)) == nil,
+           let legacyURL = d.string(forKey: Keys.serverURL),
+           !legacyURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let legacy = ServerProfile(displayName: "",
+                                       urls: legacyURL,
+                                       username: d.string(forKey: Keys.username) ?? "")
+            if let data = try? JSONEncoder().encode(legacy) {
+                d.set(data, forKey: Keys.profile(.webdav))
+            }
+        }
+
+        let initial: ServerProfile
+        if let data = d.data(forKey: Keys.profile(kind)),
+           let decoded = try? JSONDecoder().decode(ServerProfile.self, from: data) {
+            initial = decoded
+        } else {
+            initial = ServerProfile()
+        }
+        serverDisplayName = initial.displayName
+        serverURL = initial.urls
+        username = initial.username
+        password = Keychain.load(account: kind.rawValue) ?? ""
         if let data = defaults.data(forKey: Keys.recent),
            let list = try? JSONDecoder().decode([RecentEntry].self, from: data) {
             recent = list
@@ -179,6 +230,8 @@ final class AppStore: ObservableObject {
     }
 
     var baseTitle: String {
+        let custom = serverDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !custom.isEmpty { return custom }
         if serverKind == .komga { return "Komga" }
         guard let url = baseURL else { return "漫画坞" }
         let last = url.lastPathComponent
@@ -199,8 +252,12 @@ final class AppStore: ObservableObject {
     var serverKind: ServerKind {
         get { ServerKind(rawValue: serverKindRaw) ?? .webdav }
         set {
+            guard newValue != serverKind else { return }
+            // 先把当前这类型的输入存回去，再切 —— 否则改了一半切走就丢了
+            persistActiveProfile()
             serverKindRaw = newValue.rawValue
             defaults.set(newValue.rawValue, forKey: Keys.serverKind)
+            loadActiveProfile(newValue)
             activeURL = nil
             lastGoodURL = nil
         }
@@ -226,9 +283,61 @@ final class AppStore: ObservableObject {
         }
     }
 
+    // MARK: - Profiles
+
+    private func readProfile(_ kind: ServerKind) -> ServerProfile {
+        guard let data = defaults.data(forKey: Keys.profile(kind)),
+              let profile = try? JSONDecoder().decode(ServerProfile.self, from: data) else {
+            return ServerProfile()
+        }
+        return profile
+    }
+
+    private func writeProfile(_ profile: ServerProfile, kind: ServerKind) {
+        guard let data = try? JSONEncoder().encode(profile) else { return }
+        defaults.set(data, forKey: Keys.profile(kind))
+    }
+
+    /// 已保存的配置（给设置页和导入向导判断「这套配过没有」）。
+    func savedProfile(_ kind: ServerKind) -> ServerProfile {
+        readProfile(kind)
+    }
+
+    func hasProfile(_ kind: ServerKind) -> Bool {
+        !readProfile(kind).isEmpty
+    }
+
+    /// 把内存里的地址/账号/密码写回当前类型。
+    private func persistActiveProfile() {
+        var profile = readProfile(serverKind)
+        profile.displayName = serverDisplayName
+        profile.urls = serverURL
+        profile.username = username
+        writeProfile(profile, kind: serverKind)
+        Keychain.save(password, account: serverKind.rawValue)
+    }
+
+    /// 从指定类型的存档载入内存。
+    private func loadActiveProfile(_ kind: ServerKind) {
+        let profile = readProfile(kind)
+        serverDisplayName = profile.displayName
+        serverURL = profile.urls
+        username = profile.username
+        password = Keychain.load(account: kind.rawValue) ?? ""
+    }
+
+    /// 导入向导专用：一次写入某类型的配置并切过去。
+    func activate(kind: ServerKind, displayName: String,
+                  serverURL: String, username: String, password: String) {
+        if kind != serverKind { serverKind = kind }
+        save(serverURL: serverURL, username: username, password: password,
+             displayName: displayName)
+    }
+
     // MARK: - Mutations
 
-    func save(serverURL: String, username: String, password: String) {
+    func save(serverURL: String, username: String, password: String,
+              displayName: String? = nil) {
         var cleaned = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while cleaned.hasSuffix("/") && cleaned.count > 8 {
             cleaned.removeLast()
@@ -236,19 +345,32 @@ final class AppStore: ObservableObject {
         self.serverURL = cleaned
         self.username = username
         self.password = password
+        if let displayName { self.serverDisplayName = displayName }
+
+        var profile = readProfile(serverKind)
+        profile.urls = cleaned
+        profile.username = username
+        profile.displayName = serverDisplayName
+        writeProfile(profile, kind: serverKind)
+        Keychain.save(password, account: serverKind.rawValue)
+
+        // 旧版本的单配置文件顺手同步一份，回退旧版本时还能读到
         defaults.set(cleaned, forKey: Keys.serverURL)
         defaults.set(username, forKey: Keys.username)
-        Keychain.save(password, account: "webdav")
     }
 
-    /// Wipe the server config so the app returns to the first-run setup screen.
+    /// 只清**当前类型**的配置。另一套（WebDAV / Komga）原样保留。
     func clearConfiguration() {
         serverURL = ""
         username = ""
         password = ""
+        serverDisplayName = ""
+        defaults.removeObject(forKey: Keys.profile(serverKind))
         defaults.removeObject(forKey: Keys.serverURL)
         defaults.removeObject(forKey: Keys.username)
-        Keychain.save("", account: "webdav")
+        Keychain.save("", account: serverKind.rawValue)
+        activeURL = nil
+        lastGoodURL = nil
     }
 
     // MARK: - Reading progress
