@@ -172,8 +172,9 @@ extension View {
         }
     }
 
-    /// 底栏的圆按钮：用 `.clear` 而不是 `.regular` —— regular 的磨砂感太重，
-    /// clear 才透得过去。`.interactive()` 让玻璃本身对手指有反应（按下去会形变）。
+    /// 底栏的圆按钮：用 `.clear` 而不是 `.regular` —— regular 的磨砂感太重。
+    /// 但纯 clear 又太透（看不清按钮边界），所以叠一层很淡的白（深色模式换成淡黑）。
+    /// `.interactive()` 让玻璃本身对手指有反应（按下去会形变）。
     @ViewBuilder
     func glassCircle() -> some View {
         if #available(iOS 26.0, *) {
@@ -190,5 +191,36 @@ extension View {
         } else {
             self.background(.ultraThinMaterial, in: Capsule())
         }
+    }
+}
+
+/// 底栏专用玻璃：clear 通透度 + 一层极淡的底色。
+///
+/// 为什么不用 `glassCapsule()`：纯 `.clear` 太透，按钮浮在内容上看不清边界；
+/// `.regular` 又满是磨砂。原生 tab bar 是「透但有自己的底色」，所以要给 tint。
+/// tint 得跟着深浅模式走 —— 浅色加白、深色加黑，反了会脏。
+struct BarGlass<S: Shape>: ViewModifier {
+    let shape: S
+    @Environment(\.colorScheme) private var scheme
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(
+                .clear
+                    .tint(scheme == .dark ? Color.black.opacity(0.34)
+                                          : Color.white.opacity(0.42))
+                    .interactive(),
+                in: shape
+            )
+        } else {
+            content.background(.ultraThinMaterial, in: shape)
+        }
+    }
+}
+
+extension View {
+    func barGlass<S: Shape>(_ shape: S) -> some View {
+        modifier(BarGlass(shape: shape))
     }
 }

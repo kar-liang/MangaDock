@@ -25,7 +25,7 @@ enum RootTab: Hashable {
 ///
 /// 为什么不用 TabView：系统的 tab bar 只能排成一行等宽项，做不出
 /// 「三个挤在左边胶囊里、➕ 单独漂在右边」这种分裂布局。代价是系统和底栏相关的
-/// 自动行为全得自己实现 —— 二级页面隐藏（`hidesRootBar()`）、长按滑动切页、
+/// 自动行为全得自己实现 —— 二级页面隐藏（`hidesRootBar()`）、长按气泡切页、
 /// 选中块的液态玻璃过渡，都在这个文件里。
 struct RootTabView: View {
     @EnvironmentObject private var store: AppStore
@@ -43,20 +43,23 @@ struct RootTabView: View {
     /// 这次弹窗里真的存了一套配置吗？存了就直接跳到「文件」看库
     @State private var didAddServer = false
 
-    /// 长按拖动中高亮块停在哪（松手才真正切页面）
+    /// 长按拖动中浮起的那个气泡对应哪个页面（松手才真正切）
     @State private var hoverTab: RootTab?
+    /// 手指在胶囊里的横坐标，气泡跟着它走
+    @State private var fingerX: CGFloat = 0
     /// 胶囊总宽（含内边距），把手指的 x 换算成第几个按钮要靠它
     @State private var capsuleWidth: CGFloat = 0
 
     @Namespace private var tabHighlight
 
     private let barHeight: CGFloat = 62
-    /// 胶囊底边离屏幕物理底边的距离。
-    /// 原来挂在 safeAreaInset 里，等于「安全区 34 + 6」= 40pt，看着悬在半空。
-    /// 20pt 刚好压到 home indicator 上沿，跟系统 tab bar 的位置感一致。
+    /// 胶囊底边离屏幕物理底边的距离
     private let barBottomGap: CGFloat = 20
     /// 胶囊内边距（四周同值）
     private let capsuleInset: CGFloat = 5
+    /// 胶囊圆角。铺满半圆（31）显得太圆，24 更接近原生的克制感
+    private let capsuleRadius: CGFloat = 24
+    private let bubbleSize: CGFloat = 74
 
     private var visibleTabs: [RootTab] {
         var tabs: [RootTab] = []
@@ -73,29 +76,31 @@ struct RootTabView: View {
     private var highlightTab: RootTab { hoverTab ?? selection }
 
     var body: some View {
-        GeometryReader { proxy in
-            // 底栏是 overlay（会贴到屏幕物理底边），列表的避让得
-            // 自己补：从「底栏视觉总高」里扣掉系统已经给的安全区。
-            let reserve = max(0, barHeight + barBottomGap - proxy.safeAreaInsets.bottom)
-
+        // ⚠️ 这里不能套 GeometryReader 再 overlay：GeometryReader 的 frame
+        // 本来就在安全区里面，overlay 贴的是「安全区底边」，离屏幕底还差 34pt，
+        // 再加 padding 只会更高（2.0.38 就是这么把底栏顶上去的）。
+        // 正确做法是让容器真的忽略底部安全区，底栏才落得到屏幕底边。
+        ZStack(alignment: .bottom) {
             ZStack {
                 page(.shelf)
                 page(.files)
                 page(.settings)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 底栏是浮层不占位，列表得自己留出这段，否则最后一行被压住。
+            // 安全区已被忽略，所以这里直接给「底栏视觉总高」，不用再扣 34。
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: barHidden ? 0 : reserve)
+                Color.clear.frame(height: barHidden ? 0 : barHeight + barBottomGap)
             }
-            .overlay(alignment: .bottom) {
-                if !barHidden {
-                    bottomBar
-                        .padding(.bottom, barBottomGap)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+
+            if !barHidden {
+                bottomBar
+                    .padding(.bottom, barBottomGap)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .animation(.easeInOut(duration: 0.22), value: barHidden)
         }
+        .ignoresSafeArea(.container, edges: .bottom)
+        .animation(.easeInOut(duration: 0.22), value: barHidden)
         .sheet(isPresented: $showImport, onDismiss: {
             let target: RootTab = didAddServer ? .files : pendingTab
             didAddServer = false
@@ -156,9 +161,17 @@ struct RootTabView: View {
             }
         }
         .padding(capsuleInset)
-        .glassCapsule()
+        .barGlass(RoundedRectangle(cornerRadius: capsuleRadius, style: .continuous))
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { capsuleWidth = $0 }
-        // 系统 tab bar 长按后可以左右滑动切页，自绘的得自己接
+        // 长按浮起的气泡：原生 tab bar 长按时会把当前项放大成一枚玻璃气泡，
+        // 跟着手指左右滑。这里复刻的就是它。
+        .overlay(alignment: .bottom) {
+            if let tab = hoverTab {
+                bubble(for: tab)
+                    .offset(x: bubbleOffsetX, y: -(barHeight + 14))
+                    .transition(.scale(scale: 0.5, anchor: .bottom).combined(with: .opacity))
+            }
+        }
         .simultaneousGesture(scrubGesture)
         .animation(highlightAnimation, value: highlightTab)
     }
@@ -180,14 +193,14 @@ struct RootTabView: View {
             .frame(height: 52)
             .background {
                 if active {
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .fill(Color.primary.opacity(0.07))
                         // 高亮块不是原地消失再冒出来，是从上一个按钮一路滑过去。
                         // 拖动时它跟着手指走，靠的就是这块被反复插值。
                         .matchedGeometryEffect(id: "tabHighlight", in: tabHighlight)
                 }
             }
-            .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selection == tab ? .isSelected : [])
@@ -207,7 +220,24 @@ struct RootTabView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("添加服务器")
-        .glassCircle()
+        .barGlass(Circle())
+    }
+
+    /// 长按时浮起的那枚玻璃气泡，内容就是当前悬停项的图标
+    private func bubble(for tab: RootTab) -> some View {
+        Image(systemName: tab.icon)
+            .font(.system(size: 27, weight: .semibold))
+            .foregroundStyle(.primary)
+            .frame(width: bubbleSize, height: bubbleSize)
+            .barGlass(Circle())
+    }
+
+    /// 气泡的横向位置（相对胶囊中心），夹在胶囊范围内，免得飘到 ➕ 底下或屏幕外
+    private var bubbleOffsetX: CGFloat {
+        let half = capsuleWidth / 2
+        let margin = bubbleSize / 2 + capsuleInset
+        guard half > margin else { return 0 }
+        return min(max(fingerX - half, -half + margin), half - margin)
     }
 
     /// 拖动时用短弹簧（跟手），松手后用长一点的（有回弹）
@@ -224,6 +254,7 @@ struct RootTabView: View {
             .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { value in
                 guard case .second(true, let drag?) = value else { return }
+                fingerX = drag.location.x
                 let next = tab(atX: drag.location.x)
                 if next != hoverTab {
                     UISelectionFeedbackGenerator().selectionChanged()
