@@ -56,6 +56,13 @@ struct WebtoonReaderView: UIViewRepresentable {
         scroll.addGestureRecognizer(single)
 
         context.coordinator.buildPages(in: scroll)
+        // makeUIView 这一刻还没走完布局，scroll.bounds 往往是零。
+        // 下一 runloop 再补一次：这样即便 SwiftUI 的 pageWidth 迟迟不到，
+        // 也能用 scrollView 自己的宽度排版并开始加载，不会干等着全黑。
+        DispatchQueue.main.async {
+            context.coordinator.relayout()
+            context.coordinator.refreshIndicator()
+        }
         return scroll
     }
 
@@ -190,7 +197,10 @@ struct WebtoonReaderView: UIViewRepresentable {
         /// 计算所有页 frame 和 contentView 高度。
         func relayout() {
             guard let contentView, let scrollView else { return }
-            let width = parent.pageWidth
+            // pageWidth 还没从 SwiftUI 传进来时，先用 scrollView 自己的宽度兜底。
+            // 否则所有页都是零尺寸：画面全黑、点不到东西、连加载转圈都判不出来
+            // （refreshIndicator 找「视口内的页」一个都找不到，以为没东西要等）。
+            let width = parent.pageWidth > 0 ? parent.pageWidth : scrollView.bounds.width
             guard width > 0 else { return }
             layoutWidth = width
 
@@ -309,13 +319,18 @@ struct WebtoonReaderView: UIViewRepresentable {
             let bottom = (scrollView.contentOffset.y + scrollView.bounds.height) / zoom
 
             var waiting: Int?
-            for i in 0..<pageViews.count {
-                let f = pageViews[i].frame
-                // 只算真正落在视口里的页
-                guard f.maxY > top, f.minY < bottom else { continue }
-                if pageViews[i].image == nil, !failedPages.contains(i) {
-                    waiting = i
-                    break
+            // 还没排版（所有页零高度）时判断不出「视口里有哪些页」，
+            // 这时只要还有页没出图就先转圈 —— 否则用户对着全黑屏等好几秒，没有任何反馈。
+            let laidOut = pageViews.contains { $0.frame.height > 0 }
+            if laidOut {
+                waiting = pageViews.indices.first { i in
+                    let f = pageViews[i].frame
+                    guard f.maxY > top, f.minY < bottom else { return false }
+                    return pageViews[i].image == nil && !failedPages.contains(i)
+                }
+            } else {
+                waiting = pageViews.indices.first {
+                    pageViews[$0].image == nil && !failedPages.contains($0)
                 }
             }
 
