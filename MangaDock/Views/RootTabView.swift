@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum RootTab: Hashable {
     case shelf, files, settings
@@ -33,6 +34,8 @@ struct RootTabView: View {
     @AppStorage("mangadock.tab.files") private var showFiles = true
 
     @State private var selection: RootTab = .shelf
+    /// 选中高亮块在几个按钮之间滑动用的命名空间
+    @Namespace private var tabHighlight
     /// 访问过的页面。首次进入才构建，之后一直留在层级里 ——
     /// 切走再切回来，滚动位置和目录缓存都还在（跟 TabView 的行为对齐）。
     @State private var mounted: Set<RootTab> = [.shelf]
@@ -118,6 +121,8 @@ struct RootTabView: View {
             }
             .padding(5)
             .glassCapsule()
+            // 高亮块滑动的弹簧：跟系统 tab bar 的手感对齐（略带回弹、不拖泥带水）
+            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: selection)
 
             addButton
         }
@@ -147,6 +152,9 @@ struct RootTabView: View {
                 if active {
                     RoundedRectangle(cornerRadius: 26, style: .continuous)
                         .fill(Color.primary.opacity(0.07))
+                        // 这一句就是「原生那种滑动」：高亮块不是简单地在旧位置消失、
+                        // 新位置冒出来，而是从上一个按钮一路滑过去。
+                        .matchedGeometryEffect(id: "tabHighlight", in: tabHighlight)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -156,6 +164,7 @@ struct RootTabView: View {
 
     private var addButton: some View {
         Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             pendingTab = selection
             showImport = true
         } label: {
@@ -175,6 +184,8 @@ struct RootTabView: View {
     private func select(_ tab: RootTab) {
         mounted.insert(tab)
         guard selection != tab else { return }
+        // 系统 tab bar 点击会有一记轻触感，自绘的得自己补
+        UISelectionFeedbackGenerator().selectionChanged()
         selection = tab
         pendingTab = tab
     }
