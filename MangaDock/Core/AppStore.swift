@@ -95,9 +95,6 @@ final class AppStore: ObservableObject {
     /// 探测到的可用地址（内存态，不持久化，每次启动重新探测）。
     private var activeURL: URL?
 
-    /// 逐个探测地址，返回第一个能连上的。只有一个地址时直接用（不探测）。
-    /// 全部失败则回退到第一个，让后续请求正常报错而非空转。
-    @discardableResult
     /// 上次 Ping 通的地址。冷启动直接用它，省掉一轮探测。
     private var lastGoodURL: URL? {
         get {
@@ -110,6 +107,9 @@ final class AppStore: ObservableObject {
         }
     }
 
+    /// 并行探测所有地址，返回第一个能连上的。只有一个地址时直接用（不探测）。
+    /// 全部失败则回退到第一个，让后续请求正常报错而非空转。
+    @discardableResult
     func probeServers() async -> URL? {
         let urls = serverURLs
         guard !urls.isEmpty else { return nil }
