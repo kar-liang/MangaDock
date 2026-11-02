@@ -45,7 +45,7 @@ final class ReaderModel: ObservableObject {
         // ~25 MB decoded, so "10 items" could mean 250 MB and iOS would start
         // killing caches behind our back (which is one source of the black
         // flash mid-scroll).
-        imageCache.totalCostLimit = 160 * 1024 * 1024
+        imageCache.totalCostLimit = 240 * 1024 * 1024
     }
 
     func aspect(for position: Int) -> CGFloat {
@@ -357,7 +357,10 @@ final class ReaderModel: ObservableObject {
     /// 分页可见 1 页、条漫视口约 2-3 页，统一解码前 3 页覆盖两种情况。
     private func warmVisiblePages() async {
         guard pageCount > 0 else { return }
-        let end = min(pageCount, index + 3)
+        // 只预热「当前 + 下一话前 1 页」。
+        // 预热 3 页时，超长条漫每页 89MB × 3 = 267MB > 缓存上限，
+        // 第一页在预热阶段就被 LRU 挤出去，显示时还要再解一次 —— 白干。
+        let end = min(pageCount, index + 2)
         for position in index..<end {
             if Task.isCancelled { return }
             statusText = "正在加载第 \(position + 1) / \(pageCount) 页"

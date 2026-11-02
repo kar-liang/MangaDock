@@ -20,6 +20,12 @@ enum ImageDecoder {
         return 1500
     }
 
+    /// 单页像素数上限（约 1400 万像素 ≈ 56MB 位图）。
+    ///
+    /// 条漫的页是「又宽又长」，只卡短边没用：2200 宽能配出 1 万多高的图，
+    /// 面积照样爆。这里按总像素再压一道，让「预热 2 页」真的放得进缓存。
+    private static let maxPixels: CGFloat = 14_000_000
+
     /// Decodes at display resolution instead of full resolution — a 3000x4000
     /// manga scan would otherwise eat 48 MB of RAM per page.
     /// 限制「短边」（宽度）到 maxPixelSize，而不是「最长边」。
@@ -39,8 +45,20 @@ enum ImageDecoder {
            let h = props[kCGImagePropertyPixelHeight] as? CGFloat, w > 0, h > 0 {
             let short = min(w, h)
             let long = max(w, h)
-            // 短边超了才缩放（等比压短边）；没超就保持原尺寸，别误缩长边。
-            targetMaxPixel = short > limit ? long * (limit / short) : long
+
+            // 第一步：短边超了才缩放（等比压短边）；没超就保持原尺寸，别误缩长边。
+            var scale: CGFloat = short > limit ? limit / short : 1
+
+            // 第二步：总像素封顶。
+            // 只限制短边挡不住超长条漫 —— 2200x10111 有 2200 万像素 = 89MB，
+            // 一张就吃掉半个图片缓存，预热三页直接把第一页挤出去，
+            // 表现就是加载提示「1→2→3→1」、第一页要解两次。
+            let projected = w * scale * h * scale
+            if projected > Self.maxPixels {
+                scale *= sqrt(Self.maxPixels / projected)
+            }
+
+            targetMaxPixel = long * scale
         }
 
         let options: [CFString: Any] = [
