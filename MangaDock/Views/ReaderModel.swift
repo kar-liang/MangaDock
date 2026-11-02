@@ -261,8 +261,8 @@ final class ReaderModel: ObservableObject {
             // 整包几十 MB，5G 上要几十秒；Range 读两次请求就能出第一页。
             // 不自动补下整包 —— 老大常在移动网络上看，别偷跑流量。
             // 想要后续零延迟，用「下载本章」。
-            if !cached, item.isArchive,
-               let remote = try? await RemoteZipComicSource(url: item.url, client: client) {
+            if !cached, item.isArchive, let webdav = client as? WebDAVClient,
+               let remote = try? await RemoteZipComicSource(url: item.url, client: webdav) {
                 // 验证第一页能读。AI 超分大图 CBZ 的 Range 读可能失败
                 // （服务器 Range 限制 / 大 payload 超时），失败就回退整包下载，
                 // 保证能加载，而不是「初始化成功但每页都读不出来」。

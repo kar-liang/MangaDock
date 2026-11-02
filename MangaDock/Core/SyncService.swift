@@ -80,7 +80,7 @@ enum SyncService {
     // MARK: - Push / pull
 
     static func push(store: AppStore, shelf: [ShelfEntry]) async {
-        guard isEnabled, let client = store.makeClient(),
+        guard isEnabled, let client = store.makeClient() as? WebDAVClient,
               let base = store.baseURL else { return }
         let payload = payload(store: store, shelf: shelf)
         guard let data = try? JSONEncoder().encode(payload) else { return }
@@ -98,7 +98,7 @@ enum SyncService {
     /// Manual upload: this device's state replaces the copy on the server, no
     /// timestamp comparison. Returns a one-line result for the settings UI.
     static func pushNow(store: AppStore, shelf: [ShelfEntry]) async -> String {
-        guard let client = store.makeClient(), let base = store.baseURL else {
+        guard let client = store.makeClient() as? WebDAVClient, let base = store.baseURL else {
             return "还没有配置服务器"
         }
         let payload = payload(store: store, shelf: shelf)
@@ -118,7 +118,7 @@ enum SyncService {
     /// Manual download: the server copy replaces local state unconditionally —
     /// the user asked for it explicitly, so "last write wins" must not veto it.
     static func pullNow(store: AppStore, shelfStore: ShelfStore) async -> String {
-        guard let client = store.makeClient(), let base = store.baseURL else {
+        guard let client = store.makeClient() as? WebDAVClient, let base = store.baseURL else {
             return "还没有配置服务器"
         }
 
@@ -149,7 +149,7 @@ enum SyncService {
     /// Returns true when remote state was applied.
     @discardableResult
     static func pull(store: AppStore, shelfStore: ShelfStore) async -> Bool {
-        guard isEnabled, let client = store.makeClient(),
+        guard isEnabled, let client = store.makeClient() as? WebDAVClient,
               let base = store.baseURL else { return false }
 
         guard let data = try? await client.data(for: syncURL(baseURL: base)),

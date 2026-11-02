@@ -35,7 +35,7 @@ enum CoverSyncService {
     /// Pushes local covers. Returns a note for the settings UI, or nil when
     /// there was nothing to do (no custom covers at all).
     static func push(store: AppStore) async -> String? {
-        guard let client = store.makeClient(), let base = store.baseURL else { return nil }
+        guard let client = store.makeClient() as? WebDAVClient, let base = store.baseURL else { return nil }
         let local = CoverStore.shared.customCovers
         guard !local.isEmpty else { return nil }
 
@@ -81,7 +81,7 @@ enum CoverSyncService {
     /// Pulls covers the server has and this device doesn't (or has an older
     /// copy of). Returns a note for the settings UI.
     static func pull(store: AppStore) async -> String? {
-        guard let client = store.makeClient(), let base = store.baseURL else { return nil }
+        guard let client = store.makeClient() as? WebDAVClient, let base = store.baseURL else { return nil }
         let remote = await fetchIndex(client: client, base: base)
         guard !remote.isEmpty else { return nil }
 
