@@ -139,57 +139,122 @@ final class AppStore: ObservableObject {
     // MARK: - Derived
 
     /// 解析多行地址（换行分隔）为规范化 URL 列表。向后兼容单地址。
-    var serverURLs: [URL] {
-        serverURL
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .compactMap { Self.normalizedURL($0) }
+    var serverURLs: [URL] { addresses(for: serverKind) }
+
+    /// 每种后端各自探测到的可用地址（内存态，每次启动重新探测）。
+    private var activeURLs: [ServerKind: URL] = [:]
+
+    /// 某套后端配的地址列表（多行 → URL）
+    func addresses(for kind: ServerKind) -> [URL] {
+        readProfile(kind).lines.compactMap { Self.normalizedURL($0) }
     }
 
-    /// 探测到的可用地址（内存态，不持久化，每次启动重新探测）。
-    private var activeURL: URL?
+    /// 这套后端配过没有
+    func isReady(_ kind: ServerKind) -> Bool {
+        !addresses(for: kind).isEmpty
+    }
 
-    /// 上次 Ping 通的地址。冷启动直接用它，省掉一轮探测。
-    private var lastGoodURL: URL? {
-        get {
-            guard let s = UserDefaults.standard.string(forKey: "mangadock.lastGoodURL"),
-                  let url = URL(string: s) else { return nil }
-            return url
-        }
-        set {
-            UserDefaults.standard.set(newValue?.absoluteString, forKey: "mangadock.lastGoodURL")
+    /// 已配置的所有后端。文件页按这个列出源。
+    var configuredKinds: [ServerKind] {
+        ServerKind.allCases.filter { isReady($0) }
+    }
+
+    func baseURL(for kind: ServerKind) -> URL? {
+        if let url = activeURLs[kind] { return url }
+        return addresses(for: kind).first
+    }
+
+    /// 按类型取客户端。凭据读那套自己的 profile —— 不受「当前激活的是谁」影响，
+    /// 这样两套服务器可以同时在线，各自的条目用各自的 client。
+    func client(for kind: ServerKind) -> RemoteClient? {
+        guard let base = baseURL(for: kind) else { return nil }
+        let profile = readProfile(kind)
+        let pass = Keychain.load(account: kind.rawValue) ?? ""
+        switch kind {
+        case .webdav:
+            return WebDAVClient(username: profile.username, password: pass, baseURL: base)
+        case .komga:
+            return KomgaClient(baseURL: base, username: profile.username, password: pass)
         }
     }
 
-    /// 并行探测所有地址，返回第一个能连上的。只有一个地址时直接用（不探测）。
-    /// 全部失败则回退到第一个，让后续请求正常报错而非空转。
+    /// 条目属于哪套后端。komga:// 是 Komga，其余一律当 WebDAV。
+    func kind(for url: URL) -> ServerKind {
+        url.scheme == "komga" ? .komga : .webdav
+    }
+
+    /// 按条目 URL 取客户端 —— 两套并存的关键：谁家的条目用谁家的 client。
+    func client(for url: URL) -> RemoteClient? {
+        client(for: kind(for: url))
+    }
+
+    /// 某套后端的根目录
+    func rootURL(for kind: ServerKind) -> URL? {
+        switch kind {
+        case .webdav:
+            return baseURL(for: .webdav).map { WebDAVItem.directoryURL($0) }
+        case .komga:
+            return URL(string: "komga://root")
+        }
+    }
+
+    /// 上次 Ping 通的地址（按类型分开记，两套各自有各自的）
+    private func lastGood(for kind: ServerKind) -> URL? {
+        guard let s = UserDefaults.standard.string(forKey: "mangadock.lastGoodURL.\(kind.rawValue)"),
+              let url = URL(string: s) else { return nil }
+        return url
+    }
+
+    private func setLastGood(_ url: URL?, for kind: ServerKind) {
+        UserDefaults.standard.set(url?.absoluteString,
+                                  forKey: "mangadock.lastGoodURL.\(kind.rawValue)")
+    }
+
+    /// 探测**所有已配置**的后端，并行互不阻塞。
+    /// 两套并存时启动一次就把两边都探好，切源时不用再等。
     @discardableResult
     func probeServers() async -> URL? {
-        let urls = serverURLs
-        guard !urls.isEmpty else { return nil }
+        let kinds = configuredKinds
+        guard !kinds.isEmpty else { return nil }
+        await withTaskGroup(of: Void.self) { group in
+            for kind in kinds {
+                group.addTask { await self.probe(kind) }
+            }
+        }
+        return baseURL(for: serverKind)
+    }
+
+    /// 单套后端的地址探测：并行试所有地址，谁先通就用谁。
+    private func probe(_ kind: ServerKind) async {
+        let urls = addresses(for: kind)
+        guard !urls.isEmpty else { return }
         if urls.count == 1 {
-            activeURL = urls[0]
-            return urls[0]
+            activeURLs[kind] = urls[0]
+            return
         }
-
         // 冷启动先用上次成功的地址：外网场景下内网地址必然连不上，
-        // 串行探测要白等一个超时。这里直接跳过这一轮。
-        if let last = lastGoodURL, urls.contains(last) {
-            activeURL = last
-            return last
+        // 串行探测要白等一个超时。
+        if let last = lastGood(for: kind), urls.contains(last) {
+            activeURLs[kind] = last
+            return
         }
 
-        // 并行探测所有地址，谁先通就用谁。原来是串行 for 循环，
-        // 每个超时 10 秒 —— 两个地址在外网下最坏要等 20 秒。
-        let username = self.username
-        let password = self.password
+        let profile = readProfile(kind)
+        let user = profile.username
+        let pass = Keychain.load(account: kind.rawValue) ?? ""
         let found: URL? = await withTaskGroup(of: URL?.self) { group in
             for url in urls {
                 group.addTask {
-                    let client = WebDAVClient(username: username, password: password,
-                                              baseURL: url, timeout: 4)
-                    return (try? await client.ping()) != nil ? url : nil
+                    switch kind {
+                    case .webdav:
+                        let c = WebDAVClient(username: user, password: pass,
+                                             baseURL: url, timeout: 4)
+                        return (try? await c.ping()) != nil ? url : nil
+                    case .komga:
+                        let c = KomgaClient(baseURL: url, username: user,
+                                            password: pass, timeout: 4)
+                        return (try? await c.ping()) != nil ? url : nil
+                    }
                 }
             }
             for await result in group {
@@ -202,19 +267,17 @@ final class AppStore: ObservableObject {
         }
 
         let winner = found ?? urls[0]
-        activeURL = winner
-        if found != nil { lastGoodURL = winner }
-        return winner
+        activeURLs[kind] = winner
+        if found != nil { setLastGood(winner, for: kind) }
     }
 
-    var baseURL: URL? {
-        if let activeURL { return activeURL }
-        return serverURLs.first
-    }
+    var baseURL: URL? { baseURL(for: serverKind) }
 
-    var isConfigured: Bool {
-        !serverURLs.isEmpty
-    }
+    /// 当前激活后端的根目录
+    var rootURL: URL? { rootURL(for: serverKind) }
+
+    /// 任意一套配过就算配置好了 —— 两套并存，能进主界面就行
+    var isConfigured: Bool { !configuredKinds.isEmpty }
 
     static func normalizedURL(_ text: String) -> URL? {
         var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -258,29 +321,13 @@ final class AppStore: ObservableObject {
             serverKindRaw = newValue.rawValue
             defaults.set(newValue.rawValue, forKey: Keys.serverKind)
             loadActiveProfile(newValue)
-            activeURL = nil
-            lastGoodURL = nil
         }
     }
 
-    /// 文件页的起点。WebDAV 是服务器根目录，Komga 是虚拟的 komga://root。
-    var rootURL: URL? {
-        switch serverKind {
-        case .webdav:
-            return baseURL.map { WebDAVItem.directoryURL($0) }
-        case .komga:
-            return URL(string: "komga://root")
-        }
-    }
-
+    /// 当前激活后端的客户端。只给「不关心是哪一套」的旧代码用 ——
+    /// 涉及具体条目的地方一律走 `client(for: item.url)`。
     func makeClient() -> RemoteClient? {
-        guard let base = baseURL else { return nil }
-        switch serverKind {
-        case .webdav:
-            return WebDAVClient(username: username, password: password, baseURL: base)
-        case .komga:
-            return KomgaClient(baseURL: base, username: username, password: password)
-        }
+        client(for: serverKind)
     }
 
     // MARK: - Profiles
@@ -369,8 +416,8 @@ final class AppStore: ObservableObject {
         defaults.removeObject(forKey: Keys.serverURL)
         defaults.removeObject(forKey: Keys.username)
         Keychain.save("", account: serverKind.rawValue)
-        activeURL = nil
-        lastGoodURL = nil
+        activeURLs[serverKind] = nil
+        setLastGood(nil, for: serverKind)
     }
 
     // MARK: - Reading progress

@@ -60,6 +60,7 @@ struct ServerSettingsView: View {
             } header: {
                 Text(store.serverKind == .komga ? "Komga 服务器" : "WebDAV 服务器")
             } footer: {
+                Text("两套都配好之后可以同时在线：文件页顶部分段切换，「类型」只决定打开 App 时默认看哪一套。")
                 Text(store.serverKind == .komga
                      ? "填 Komga 的访问地址，不带 /api 之类的路径。账号密码用 Komga 网页登录的那套。同样支持每行一个地址（局域网 IP + 公网域名）。"
                      : "每行填一个地址，启动时自动用能连上的那个（适合同一个库的局域网 IP + 公网域名）。用户名密码对所有地址通用。")

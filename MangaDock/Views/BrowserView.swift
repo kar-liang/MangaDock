@@ -117,6 +117,6 @@ struct BrowserView: View {
     }
 
     private func reload() async {
-        await loader.load(url: folder.requestURL, client: store.makeClient())
+        await loader.load(url: folder.requestURL, client: store.client(for: folder.requestURL))
     }
 }

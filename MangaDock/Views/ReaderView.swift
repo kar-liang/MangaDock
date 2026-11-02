@@ -498,8 +498,9 @@ struct ReaderView: View {
             await model.startLocal(startPage: store.recentPage(for: model.currentItem.url))
             return
         }
-        guard let client = store.makeClient() else {
-            model.errorMessage = "还没有配置服务器"
+        // 按当前这本的 URL 选源：Komga 的书走 Komga，其余走 WebDAV
+        guard let client = store.client(for: model.currentItem.url) else {
+            model.errorMessage = "这套服务器还没配置好"
             model.isLoading = false
             return
         }

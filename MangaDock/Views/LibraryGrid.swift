@@ -167,7 +167,7 @@ struct CoverBox: View {
             image = cached
             return
         }
-        guard !attempted, let client = store.makeClient() else { return }
+        guard !attempted, let client = store.client(for: item.url) else { return }
         attempted = true
         await CoverStore.shared.load(item, client: client)
         image = CoverStore.shared.image(for: item)

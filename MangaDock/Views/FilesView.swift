@@ -8,18 +8,60 @@ struct FilesView: View {
     @ObservedObject private var shelf = ShelfStore.shared
     @State private var mode: LayoutMode = .grid
     @State private var toast: String?
+    /// 两套都配了时，用分段控件切换看哪一套
+    @State private var activeKind: ServerKind = .webdav
 
-    private var folderKey: String { store.baseURL?.absoluteString ?? "files" }
+    private var folderKey: String {
+        store.baseURL(for: activeKind)?.absoluteString ?? "files"
+    }
+
+    /// 每套自己的显示名称（不能用 store.serverDisplayName，那只反映当前激活那套）
+    private func sourceTitle(_ kind: ServerKind) -> String {
+        let name = store.savedProfile(kind).displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        return store.baseURL(for: kind)?.host ?? kind.title
+    }
 
     var body: some View {
         NavigationStack {
-            Group {
-                if mode == .grid { gridContent } else { listContent }
+            VStack(spacing: 0) {
+                if store.configuredKinds.count > 1 {
+                    Picker("来源", selection: $activeKind) {
+                        ForEach(store.configuredKinds) { kind in
+                            Text(kind.title).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                }
+
+                Group {
+                    if mode == .grid { gridContent } else { listContent }
+                }
             }
             .navigationTitle("文件")
             .libraryNavigation()
-            .task { await reload() }
+            .task {
+                // 默认跟着「当前激活的源」；只配了一套就选那一套
+                if store.isReady(store.serverKind) {
+                    activeKind = store.serverKind
+                } else if let first = store.configuredKinds.first {
+                    activeKind = first
+                }
+                await reload()
+            }
             .onAppear { mode = LayoutPreference.shared.mode(for: folderKey) }
+            .onChange(of: activeKind) { _, _ in
+                mode = LayoutPreference.shared.mode(for: folderKey)
+                Task { await reload() }
+            }
+            // 新加/切换了服务器：文件页跟着当前激活那套走
+            .onChange(of: store.serverKind) { _, newKind in
+                guard store.isReady(newKind) else { return }
+                activeKind = newKind
+            }
             .onChange(of: shelf.lastMessage) { message in
                 guard let message else { return }
                 showToast(message)
@@ -56,10 +98,10 @@ struct FilesView: View {
                     row(for: item)
                 }
             } header: {
-                Text(store.baseTitle)
+                Text(sourceTitle(activeKind))
             } footer: {
                 if !loader.isLoading && loader.errorMessage == nil {
-                    Text("长按任意条目可以加入书架 · \(store.baseURL?.host ?? "")")
+                    Text("长按任意条目可以加入书架 · \(store.baseURL(for: activeKind)?.host ?? "")")
                         .font(.caption2)
                 }
             }
@@ -91,7 +133,7 @@ struct FilesView: View {
                 } else if loader.items.isEmpty {
                     Text("这个目录是空的").foregroundColor(.secondary)
                 } else {
-                    Text(store.baseTitle)
+                    Text(sourceTitle(activeKind))
                         .font(.subheadline.weight(.semibold))
 
                     LazyVGrid(columns: LibraryGrid.columns, spacing: 16) {
@@ -158,6 +200,7 @@ struct FilesView: View {
     }
 
     private func reload() async {
-        await loader.load(url: store.rootURL, client: store.makeClient())
+        guard let root = store.rootURL(for: activeKind) else { return }
+        await loader.load(url: root, client: store.client(for: activeKind))
     }
 }

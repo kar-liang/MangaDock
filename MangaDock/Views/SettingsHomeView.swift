@@ -76,8 +76,20 @@ struct SettingsHomeView: View {
     }
 
     private var serverSummary: String {
-        guard let host = store.baseURL?.host else { return "未配置" }
-        let name = store.serverDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let kinds = store.configuredKinds
+        if kinds.isEmpty { return "未配置" }
+        if kinds.count > 1 {
+            let names = kinds.map { kind -> String in
+                let custom = store.savedProfile(kind).displayName
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return custom.isEmpty ? kind.title : custom
+            }
+            return names.joined(separator: " + ")
+        }
+        let kind = kinds[0]
+        let host = store.baseURL(for: kind)?.host ?? "未配置"
+        let name = store.savedProfile(kind).displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? host : "\(name) · \(host)"
     }
 

@@ -465,12 +465,13 @@ struct SeriesView: View {
     // MARK: - Actions
 
     private func enqueue(_ items: [WebDAVItem]) {
-        guard !items.isEmpty, let client = store.makeClient() else { return }
+        guard !items.isEmpty,
+              let client = store.client(for: folder.requestURL) else { return }
         downloads.enqueue(items, client: client)
     }
 
     private func reload() async {
-        await loader.load(url: folder.requestURL, client: store.makeClient())
+        await loader.load(url: folder.requestURL, client: store.client(for: folder.requestURL))
     }
 }
 
