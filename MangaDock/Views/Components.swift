@@ -159,4 +159,13 @@ extension View {
             self.background(.ultraThinMaterial, in: Circle())
         }
     }
+
+    @ViewBuilder
+    func glassCapsule() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Capsule())
+        } else {
+            self.background(.ultraThinMaterial, in: Capsule())
+        }
+    }
 }

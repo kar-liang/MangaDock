@@ -86,6 +86,10 @@ struct ReaderView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
+        // 自绘底栏挂在根界面上，导航栈推上来之后它不会自己消失，
+        // 得由阅读器主动上报「我在全屏」。
+        .onAppear { store.readerDepth += 1 }
+        .onDisappear { store.readerDepth = max(0, store.readerDepth - 1) }
         .statusBarHidden(!showBars)
         .task { await reload() }
         .sheet(isPresented: $showChapterList) {

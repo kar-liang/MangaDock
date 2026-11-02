@@ -1,24 +1,44 @@
 import SwiftUI
 
 enum RootTab: Hashable {
-    case shelf, files, add, settings
+    case shelf, files, settings
+
+    var title: String {
+        switch self {
+        case .shelf: return "书架"
+        case .files: return "文件"
+        case .settings: return "设置"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .shelf: return "books.vertical.fill"
+        case .files: return "folder.fill"
+        case .settings: return "gearshape.fill"
+        }
+    }
 }
 
-/// Bottom tab bar: 书架 / 文件 / ➕ / 设置.
-/// On iOS 26 the system renders the tab bar (and every toolbar) in Liquid Glass
-/// automatically — no custom chrome needed for the bar itself.
+/// 根界面：左侧胶囊装页面按钮，右侧独立一个 ➕ 开导入向导。
+///
+/// 为什么不用 TabView：系统的 tab bar 只能排成一行等宽项，做不出
+/// 「三个挤在左边胶囊里、➕ 单独漂在右边」这种分裂布局。所以底栏整个自绘，
+/// 页面容器也自己管 —— 代价是 `.toolbar(.hidden, for: .tabBar)` 对自绘底栏无效，
+/// 阅读器得靠 `store.readerDepth` 上报，见 ReaderView。
 struct RootTabView: View {
     @EnvironmentObject private var store: AppStore
 
     @AppStorage("mangadock.tab.shelf") private var showShelf = true
     @AppStorage("mangadock.tab.files") private var showFiles = true
 
-    /// Explicit selection, so the tab bar stays put across rebuilds.
     @State private var selection: RootTab = .shelf
-    /// ➕ 只是个入口，不承载页面：选中就弹导入向导
+    /// 访问过的页面。首次进入才构建，之后一直留在层级里 ——
+    /// 切走再切回来，滚动位置和目录缓存都还在（跟 TabView 的行为对齐）。
+    @State private var mounted: Set<RootTab> = [.shelf]
     @State private var showImport = false
-    /// 弹窗前停在哪个 tab，关闭后回到那儿
-    @State private var lastTab: RootTab = .shelf
+    /// 弹窗前停在哪个页面，关闭后回到那儿
+    @State private var pendingTab: RootTab = .shelf
     /// 这次弹窗里真的存了一套配置吗？存了就直接跳到「文件」看库
     @State private var didAddServer = false
 
@@ -30,57 +50,138 @@ struct RootTabView: View {
         return tabs
     }
 
+    /// 阅读器全屏时底栏让位
+    private var barHidden: Bool { store.readerDepth > 0 }
+
     var body: some View {
-        TabView(selection: $selection) {
-            if showShelf {
-                Tab("书架", systemImage: "books.vertical.fill", value: RootTab.shelf) {
-                    ShelfView()
-                }
-            }
-            if showFiles {
-                Tab("文件", systemImage: "folder.fill", value: RootTab.files) {
-                    FilesView()
-                }
-            }
-            // ➕ 放在最后一项之前：iOS 的 TabView 没法真的在中间插一个非 tab 按钮，
-            // 所以它是个空 tab —— 选中即弹窗，弹窗关掉再切回原来的位置。
-            Tab(value: RootTab.add) {
-                Color.clear
-            } label: {
-                Label("添加", systemImage: "plus.circle.fill")
-            }
-            Tab("设置", systemImage: "gearshape.fill", value: RootTab.settings) {
-                NavigationStack {
-                    SettingsHomeView()
-                }
+        ZStack {
+            page(.shelf)
+            page(.files)
+            page(.settings)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !barHidden {
+                bottomBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .animation(.easeInOut(duration: 0.22), value: barHidden)
         .sheet(isPresented: $showImport, onDismiss: {
-            let target: RootTab = didAddServer ? .files : lastTab
+            let target: RootTab = didAddServer ? .files : pendingTab
             didAddServer = false
-            selection = visibleTabs.contains(target) ? target : (visibleTabs.first ?? .settings)
+            select(visibleTabs.contains(target) ? target : (visibleTabs.first ?? .settings))
         }) {
             ImportFlowView {
                 didAddServer = true
             }
         }
-        .onChange(of: selection) { _, newValue in
-            if newValue == .add {
-                showImport = true
-            } else {
-                lastTab = newValue
-            }
-        }
-        .onChange(of: showShelf) { _ in ensureSelectionVisible() }
-        .onChange(of: showFiles) { _ in ensureSelectionVisible() }
+        .onChange(of: showShelf) { ensureSelectionVisible() }
+        .onChange(of: showFiles) { ensureSelectionVisible() }
         .onAppear { ensureSelectionVisible() }
     }
 
+    // MARK: - Pages
+
+    @ViewBuilder
+    private func page(_ tab: RootTab) -> some View {
+        if mounted.contains(tab), visibleTabs.contains(tab) {
+            content(for: tab)
+                .opacity(selection == tab ? 1 : 0)
+                .allowsHitTesting(selection == tab)
+                .accessibilityHidden(selection != tab)
+                .zIndex(selection == tab ? 1 : 0)
+        }
+    }
+
+    @ViewBuilder
+    private func content(for tab: RootTab) -> some View {
+        switch tab {
+        case .shelf:
+            ShelfView()
+        case .files:
+            FilesView()
+        case .settings:
+            NavigationStack {
+                SettingsHomeView()
+            }
+        }
+    }
+
+    // MARK: - Bottom bar
+
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 0) {
+                ForEach(visibleTabs, id: \.self) { tab in
+                    tabButton(tab)
+                }
+            }
+            .padding(5)
+            .glassCapsule()
+
+            addButton
+        }
+        .frame(maxWidth: 520)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func tabButton(_ tab: RootTab) -> some View {
+        let active = selection == tab
+        return Button {
+            select(tab)
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 19, weight: .medium))
+                    .frame(height: 21)
+                Text(tab.title)
+                    .font(.system(size: 10.5, weight: active ? .semibold : .medium))
+            }
+            .foregroundStyle(active ? Color.primary : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background {
+                if active {
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(Color.primary.opacity(0.07))
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var addButton: some View {
+        Button {
+            pendingTab = selection
+            showImport = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(.primary)
+                .frame(width: 62, height: 62)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("添加服务器")
+        .glassCircle()
+    }
+
+    // MARK: - Selection
+
+    private func select(_ tab: RootTab) {
+        mounted.insert(tab)
+        guard selection != tab else { return }
+        selection = tab
+        pendingTab = tab
+    }
+
     private func ensureSelectionVisible() {
-        // ➕ 不在 visibleTabs 里，但它是合法停留位置（弹窗期间），别踢走
-        if selection == .add { return }
         if !visibleTabs.contains(selection) {
-            selection = visibleTabs.first ?? .settings
+            select(visibleTabs.first ?? .settings)
         }
     }
 }
