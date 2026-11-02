@@ -74,7 +74,7 @@ final class DownloadStore: ObservableObject {
     private static let defaultsKey = "mangadock.downloads"
 
     private var worker: Task<Void, Never>?
-    private var jobs: [(item: WebDAVItem, client: WebDAVClient)] = []
+    private var jobs: [(item: WebDAVItem, client: RemoteClient)] = []
 
     private init() {
         records = Self.loadRecords()
@@ -188,7 +188,7 @@ final class DownloadStore: ObservableObject {
 
     /// Adds chapters to the download queue (skips ones already downloaded or
     /// already queued) and starts the worker.
-    func enqueue(_ items: [WebDAVItem], client: WebDAVClient) {
+    func enqueue(_ items: [WebDAVItem], client: RemoteClient) {
         var added = false
         for item in items {
             let key = item.url.absoluteString
@@ -296,7 +296,7 @@ final class DownloadStore: ObservableObject {
     /// `@MainActor` so `progress` updates are safe; the actual byte shuffling
     /// all happens inside awaited network calls and detached writes.
     @MainActor
-    private func downloadOne(item: WebDAVItem, client: WebDAVClient) async throws -> DownloadedChapter {
+    private func downloadOne(item: WebDAVItem, client: RemoteClient) async throws -> DownloadedChapter {
         let key = item.url.absoluteString
         let folderName = CacheManager.hash(key)
         let dir = Self.root.appendingPathComponent(folderName, isDirectory: true)
@@ -326,7 +326,10 @@ final class DownloadStore: ObservableObject {
                 }
             }
             if !reusedCache {
-                try await client.download(item.url, to: destination) { [weak self] value in
+                guard let webdav = client as? WebDAVClient else {
+                    throw ZipError.unsupported("Komga 书库暂不支持整本下载")
+                }
+                try await webdav.download(item.url, to: destination) { [weak self] value in
                     Task { @MainActor [weak self] in
                         self?.progress[key] = value
                     }

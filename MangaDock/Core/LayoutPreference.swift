@@ -87,3 +87,25 @@ enum ReaderMode: String, CaseIterable, Identifiable {
     /// 是否左右翻页（普通 + 日漫）
     var isPaged: Bool { self != .vertical }
 }
+
+/// 后端服务器类型。
+enum ServerKind: String, CaseIterable, Identifiable {
+    case webdav
+    case komga
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .webdav: return "WebDAV"
+        case .komga: return "Komga"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .webdav: return "直接读服务器上的漫画文件夹（NAS 常见）"
+        case .komga: return "读 Komga 的书库，封面和分类由 Komga 管理"
+        }
+    }
+}

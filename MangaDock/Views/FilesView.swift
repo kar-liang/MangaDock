@@ -158,6 +158,6 @@ struct FilesView: View {
     }
 
     private func reload() async {
-        await loader.load(url: store.baseURL, client: store.makeClient())
+        await loader.load(url: store.rootURL, client: store.makeClient())
     }
 }

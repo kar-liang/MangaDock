@@ -35,10 +35,10 @@ final class ZipComicSource: ComicPageSource {
 /// A WebDAV folder whose children are images.
 final class FolderComicSource: ComicPageSource {
     private let items: [WebDAVItem]
-    private let client: WebDAVClient
+    private let client: RemoteClient
     let pageCount: Int
 
-    init(items: [WebDAVItem], client: WebDAVClient) {
+    init(items: [WebDAVItem], client: RemoteClient) {
         self.items = items
         self.client = client
         self.pageCount = items.count
@@ -147,3 +147,25 @@ final class PDFComicSource: ComicPageSource {
     }
 }
 
+/// Komga 上的一本书。页数在打开时问一次，之后每页按需请求。
+/// Komga 的页接口编号从 1 开始，这里的 index 从 0 开始，在 client 内部换算。
+final class KomgaComicSource: ComicPageSource {
+    let pageCount: Int
+
+    private let bookID: String
+    private let client: KomgaClient
+
+    init(bookID: String, pageCount: Int, client: KomgaClient) {
+        self.bookID = bookID
+        self.pageCount = pageCount
+        self.client = client
+    }
+
+    func pageData(at index: Int) async throws -> Data {
+        guard index >= 0, index < pageCount else { throw ZipError.corrupt }
+        guard let url = URL(string: "komga://page/\(bookID)/\(index)") else {
+            throw KomgaError.badURL
+        }
+        return try await client.data(for: url)
+    }
+}

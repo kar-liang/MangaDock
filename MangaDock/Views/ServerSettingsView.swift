@@ -23,7 +23,18 @@ struct ServerSettingsView: View {
     var body: some View {
         Form {
             Section {
-                TextField("每行一个地址，如 http://192.168.1.10:5005/dav/Comics", text: $serverURL, axis: .vertical)
+                Picker("类型", selection: Binding(
+                    get: { store.serverKind },
+                    set: { store.serverKind = $0 }
+                )) {
+                    ForEach(ServerKind.allCases) { kind in
+                        Text(kind.title).tag(kind)
+                    }
+                }
+                TextField(store.serverKind == .komga
+                          ? "如 https://komga.example.com"
+                          : "每行一个地址，如 http://192.168.1.10:5005/dav/Comics",
+                          text: $serverURL, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -33,9 +44,11 @@ struct ServerSettingsView: View {
                     .autocorrectionDisabled()
                 SecureField("密码", text: $password)
             } header: {
-                Text("WebDAV 服务器")
+                Text(store.serverKind == .komga ? "Komga 服务器" : "WebDAV 服务器")
             } footer: {
-                Text("每行填一个地址，启动时自动用能连上的那个（适合同一个库的局域网 IP + 公网域名）。用户名密码对所有地址通用。")
+                Text(store.serverKind == .komga
+                     ? "填 Komga 的访问地址，不带 /api 之类的路径。账号密码用 Komga 网页登录的那套。同样支持每行一个地址（局域网 IP + 公网域名）。"
+                     : "每行填一个地址，启动时自动用能连上的那个（适合同一个库的局域网 IP + 公网域名）。用户名密码对所有地址通用。")
             }
 
             Section {

@@ -21,7 +21,7 @@ final class FolderLoader: ObservableObject {
         items.filter { !$0.isDirectory && $0.isImage }.count
     }
 
-    func load(url: URL?, client: WebDAVClient?) async {
+    func load(url: URL?, client: RemoteClient?) async {
         guard let url, let client else {
             isLoading = false
             errorMessage = "还没有配置服务器"

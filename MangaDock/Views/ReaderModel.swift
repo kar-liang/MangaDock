@@ -32,7 +32,7 @@ final class ReaderModel: ObservableObject {
     @Published private(set) var enhanceGeneration = 0
 
     private var source: ComicPageSource?
-    private var client: WebDAVClient?
+    private var client: RemoteClient?
     private let imageCache = NSCache<NSNumber, UIImage>()
     /// Remembered width/height per page so vertical scrolling keeps stable heights
     /// even after LazyVStack throws the page view away.
@@ -112,7 +112,7 @@ final class ReaderModel: ObservableObject {
 
     // MARK: - Loading
 
-    func start(client: WebDAVClient, startPage: Int) async {
+    func start(client: RemoteClient, startPage: Int) async {
         self.client = client
         diag("reader", "open name=\(currentItem.name) startPage=\(startPage) url=\(currentItem.url.absoluteString)")
         isLoading = true
@@ -163,7 +163,7 @@ final class ReaderModel: ObservableObject {
     /// Offline: when the folder can't be listed, fall back to the chapters that
     /// were downloaded, so chapter-to-chapter reading still works with no
     /// network at all.
-    private func buildSeries(client: WebDAVClient) async {
+    private func buildSeries(client: RemoteClient) async {
         guard let parent = Self.parentURL(of: currentItem.url) else {
             fallbackSeries()
             return
@@ -227,7 +227,7 @@ final class ReaderModel: ObservableObject {
         diag("series", "count=\(series.count) index=\(seriesIndex + 1) prev=\(previous) cur=\(series[seriesIndex].name) next=\(next)")
     }
 
-    private func prepare(item: WebDAVItem, client: WebDAVClient, silent: Bool = false) async throws -> ComicPageSource {
+    private func prepare(item: WebDAVItem, client: RemoteClient, silent: Bool = false) async throws -> ComicPageSource {
         // Offline first: a downloaded chapter reads straight off disk, no
         // network round-trip and no waiting.
         if let local = await DownloadStore.shared.localSource(for: item.url) {
@@ -237,6 +237,20 @@ final class ReaderModel: ObservableObject {
                 downloadProgress = nil
             }
             return local
+        }
+
+        // Komga 的书：URL 是虚拟的 komga://book/{id}，页数问一次再按需取页
+        if item.url.scheme == "komga" {
+            guard let komga = client as? KomgaClient else { throw KomgaError.badResponse }
+            guard let bookID = KomgaClient.bookID(from: item.url) else { throw KomgaError.badURL }
+            if !silent { statusText = "正在读取 Komga…" }
+            let count = try await komga.pageCount(bookID: bookID)
+            guard count > 0 else {
+                throw ZipError.unsupported("这本书在 Komga 上没有可显示的页面")
+            }
+            diag("prepare", "KOMGA \(item.name) pages=\(count)")
+            if !silent { downloadProgress = nil }
+            return KomgaComicSource(bookID: bookID, pageCount: count, client: komga)
         }
 
         if item.isArchive || item.isPDF {
@@ -264,8 +278,11 @@ final class ReaderModel: ObservableObject {
             }
 
             if !cached {
+                guard let webdav = client as? WebDAVClient else {
+                    throw ZipError.unsupported("这个服务器不支持整包下载")
+                }
                 if !silent { statusText = "正在下载 \(item.displayName)…" }
-                try await client.download(item.url, to: cacheURL) { [weak self] value in
+                try await webdav.download(item.url, to: cacheURL) { [weak self] value in
                     guard !silent else { return }
                     Task { @MainActor [weak self] in
                         self?.downloadProgress = value

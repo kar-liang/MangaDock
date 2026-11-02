@@ -7,6 +7,7 @@ final class AppStore: ObservableObject {
 
     private enum Keys {
         static let serverURL = "mangadock.serverURL"
+        static let serverKind = "mangadock.serverKind"
         static let username = "mangadock.username"
         static let recent = "mangadock.recent"
     }
@@ -15,9 +16,12 @@ final class AppStore: ObservableObject {
     @Published var username: String
     @Published var password: String
     @Published var recent: [RecentEntry]
+    /// 后端类型：WebDAV 目录树，或者 Komga 的 REST API
+    @Published var serverKindRaw: String
 
     init() {
         serverURL = defaults.string(forKey: Keys.serverURL) ?? ""
+        serverKindRaw = defaults.string(forKey: Keys.serverKind) ?? ServerKind.webdav.rawValue
         username = defaults.string(forKey: Keys.username) ?? ""
         password = Keychain.load(account: "webdav") ?? ""
         if let data = defaults.data(forKey: Keys.recent),
@@ -175,20 +179,51 @@ final class AppStore: ObservableObject {
     }
 
     var baseTitle: String {
+        if serverKind == .komga { return "Komga" }
         guard let url = baseURL else { return "漫画坞" }
         let last = url.lastPathComponent
         return last.isEmpty ? (url.host ?? "漫画坞") : last
     }
 
     var baseItem: WebDAVItem? {
-        guard let url = baseURL else { return nil }
-        let name = url.lastPathComponent.isEmpty ? (url.host ?? "根目录") : url.lastPathComponent
-        return WebDAVItem.make(url: WebDAVItem.directoryURL(url), name: name, isDirectory: true)
+        guard let url = rootURL else { return nil }
+        switch serverKind {
+        case .webdav:
+            let name = url.lastPathComponent.isEmpty ? (url.host ?? "根目录") : url.lastPathComponent
+            return WebDAVItem.make(url: WebDAVItem.directoryURL(url), name: name, isDirectory: true)
+        case .komga:
+            return WebDAVItem.make(url: url, name: "Komga 书库", isDirectory: true)
+        }
     }
 
-    func makeClient() -> WebDAVClient? {
+    var serverKind: ServerKind {
+        get { ServerKind(rawValue: serverKindRaw) ?? .webdav }
+        set {
+            serverKindRaw = newValue.rawValue
+            defaults.set(newValue.rawValue, forKey: Keys.serverKind)
+            activeURL = nil
+            lastGoodURL = nil
+        }
+    }
+
+    /// 文件页的起点。WebDAV 是服务器根目录，Komga 是虚拟的 komga://root。
+    var rootURL: URL? {
+        switch serverKind {
+        case .webdav:
+            return baseURL.map { WebDAVItem.directoryURL($0) }
+        case .komga:
+            return URL(string: "komga://root")
+        }
+    }
+
+    func makeClient() -> RemoteClient? {
         guard let base = baseURL else { return nil }
-        return WebDAVClient(username: username, password: password, baseURL: base)
+        switch serverKind {
+        case .webdav:
+            return WebDAVClient(username: username, password: password, baseURL: base)
+        case .komga:
+            return KomgaClient(baseURL: base, username: username, password: password)
+        }
     }
 
     // MARK: - Mutations

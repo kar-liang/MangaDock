@@ -14,7 +14,16 @@ extension Notification.Name {
 enum CoverBuilder {
     static let maxPixel: CGFloat = 640
 
-    static func make(for item: WebDAVItem, client: WebDAVClient) async -> UIImage? {
+    static func make(for item: WebDAVItem, client: RemoteClient) async -> UIImage? {
+        // Komga 有现成的系列/单本缩略图，直接用它，别再走"取第一页"
+        if item.url.scheme == "komga" {
+            let kind = item.isDirectory ? "series" : "book"
+            guard let id = KomgaClient.bookID(from: item.url) else { return nil }
+            guard let url = URL(string: "komga://cover/\(kind)/\(id)"),
+                  let data = try? await client.data(for: url) else { return nil }
+            return UIImage(data: data)
+        }
+
         if item.isImage {
             var data = CacheManager.pageData(for: item.url)
             if data == nil {
@@ -37,7 +46,8 @@ enum CoverBuilder {
                     return ImageDecoder.downsample(data, maxPixelSize: CoverBuilder.maxPixel)
                 }.value
             }
-            return await RemoteZip.cover(for: item.url, client: client, maxPixel: maxPixel)
+            guard let webdav = client as? WebDAVClient else { return nil }
+            return await RemoteZip.cover(for: item.url, client: webdav, maxPixel: maxPixel)
         }
 
         if item.isPDF {
@@ -96,7 +106,7 @@ final class CoverStore: ObservableObject {
         images[item.id]
     }
 
-    func load(_ item: WebDAVItem, client: WebDAVClient) async {
+    func load(_ item: WebDAVItem, client: RemoteClient) async {
         let key = item.id
         if images[key] != nil || inFlight.contains(key) { return }
 
