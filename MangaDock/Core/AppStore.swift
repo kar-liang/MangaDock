@@ -46,11 +46,6 @@ final class AppStore: ObservableObject {
     /// 后端类型：WebDAV 目录树，或者 Komga 的 REST API
     @Published var serverKindRaw: String
 
-    /// 有几次「沉浸式页面」正压在根界面上（阅读器、目录、系列……任何推到二级的页面）。
-    /// 自绘底栏判断不了导航栈，只能靠页面自己上报 —— 用计数而不是 Bool：
-    /// 目录 → 系列 → 阅读器 三层叠着时，先关掉的中间层不该让底栏提前回来。
-    @Published var immersiveDepth: Int = 0
-
     init() {
         let d = UserDefaults.standard
         let kind = ServerKind(rawValue: d.string(forKey: Keys.serverKind) ?? "") ?? .webdav

@@ -112,17 +112,14 @@ struct LibraryNavigationModifier: ViewModifier {
 
 // MARK: - Root bar hiding
 
-/// 推到二级页面时把根界面的自绘底栏收起来。
+/// 推到二级页面时把标签栏收起来。
 ///
-/// 系统 tab bar 只要 `hidesBottomBarWhenPushed` 就自动隐藏，**自绘底栏没有这个待遇** ——
-/// 它挂在根视图上，导航栈压上来几层它都不知道。所以让每个二级页面自己上报。
+/// 用回系统 TabView 之后这件事又变简单了：直接 `.toolbar(.hidden, for: .tabBar)`
+/// 交给系统处理，push/pop 自带滑出滑入动画。
+/// （之前自绘底栏时得靠页面自己上报计数，那套已经删了。）
 struct RootBarHidingModifier: ViewModifier {
-    @EnvironmentObject private var store: AppStore
-
     func body(content: Content) -> some View {
-        content
-            .onAppear { store.immersiveDepth += 1 }
-            .onDisappear { store.immersiveDepth = max(0, store.immersiveDepth - 1) }
+        content.toolbar(.hidden, for: .tabBar)
     }
 }
 
@@ -158,9 +155,10 @@ struct ErrorStateView: View {
     }
 }
 
-// MARK: - Liquid Glass helpers
+// MARK: - Liquid Glass helper
 
 extension View {
+    /// 阅读器悬浮工具条用的玻璃面板。底栏已经换回系统 TabView，不需要自绘玻璃了。
     @ViewBuilder
     func glassPanel(cornerRadius: CGFloat = 20) -> some View {
         if #available(iOS 26.0, *) {
@@ -170,57 +168,5 @@ extension View {
             self.background(.ultraThinMaterial,
                             in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         }
-    }
-
-    /// 底栏的圆按钮：用 `.clear` 而不是 `.regular` —— regular 的磨砂感太重。
-    /// 但纯 clear 又太透（看不清按钮边界），所以叠一层很淡的白（深色模式换成淡黑）。
-    /// `.interactive()` 让玻璃本身对手指有反应（按下去会形变）。
-    @ViewBuilder
-    func glassCircle() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.clear.interactive(), in: Circle())
-        } else {
-            self.background(.ultraThinMaterial, in: Circle())
-        }
-    }
-
-    @ViewBuilder
-    func glassCapsule() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.clear.interactive(), in: Capsule())
-        } else {
-            self.background(.ultraThinMaterial, in: Capsule())
-        }
-    }
-}
-
-/// 底栏专用玻璃：clear 通透度 + 一层极淡的底色。
-///
-/// 为什么不用 `glassCapsule()`：纯 `.clear` 太透，按钮浮在内容上看不清边界；
-/// `.regular` 又满是磨砂。原生 tab bar 是「透但有自己的底色」，所以要给 tint。
-/// tint 得跟着深浅模式走 —— 浅色加白、深色加黑，反了会脏。
-struct BarGlass<S: Shape>: ViewModifier {
-    let shape: S
-    @Environment(\.colorScheme) private var scheme
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(
-                .clear
-                    .tint(scheme == .dark ? Color.black.opacity(0.34)
-                                          : Color.white.opacity(0.42))
-                    .interactive(),
-                in: shape
-            )
-        } else {
-            content.background(.ultraThinMaterial, in: shape)
-        }
-    }
-}
-
-extension View {
-    func barGlass<S: Shape>(_ shape: S) -> some View {
-        modifier(BarGlass(shape: shape))
     }
 }
