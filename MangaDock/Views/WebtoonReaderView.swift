@@ -93,6 +93,12 @@ struct WebtoonReaderView: UIViewRepresentable {
         private var loadedPages: Set<Int> = []
         /// 正在加载的页任务，避免重复加载。
         private var loadingTasks: [Int: Task<Void, Never>] = [:]
+        /// 正在加载的页数。> 0 时显示转圈 —— 条漫是整章铺开、按页按需加载的，
+        /// 页还没回来之前那块就是纯黑，不给指示的话看着像卡死了。
+        private var pendingLoads = 0
+        /// 悬浮在可视区中心的转圈。不挂在某一页上：条漫单页可能比屏幕还高，
+        /// 挂在页面中心的话转圈会跑到屏幕外面去。
+        private var indicator: UIActivityIndicatorView?
 
         init(parent: WebtoonReaderView) {
             self.parent = parent
@@ -113,6 +119,19 @@ struct WebtoonReaderView: UIViewRepresentable {
             loadedPages.removeAll()
             loadingTasks.values.forEach { $0.cancel() }
             loadingTasks.removeAll()
+
+            // 加载指示器：挂在 scrollView 上（不随内容滚走），位置每次由
+            // positionIndicator() 摆到可视区中心。
+            if indicator == nil {
+                let ind = UIActivityIndicatorView(style: .medium)
+                ind.color = UIColor.white.withAlphaComponent(0.9)
+                ind.hidesWhenStopped = true
+                ind.isUserInteractionEnabled = false
+                scroll.addSubview(ind)
+                indicator = ind
+            }
+            pendingLoads = 0
+            indicator?.stopAnimating()
 
             let count = pageCount
             for i in 0..<count {
@@ -205,7 +224,9 @@ struct WebtoonReaderView: UIViewRepresentable {
 
             loadingTasks[index] = Task { [weak self] in
                 guard let self else { return }
+                self.beginLoad()
                 let image = await self.parent.model.image(at: index)
+                self.endLoad()
                 guard !Task.isCancelled else { return }
                 self.loadingTasks[index] = nil
                 guard let image, index < self.pageViews.count else { return }
@@ -220,6 +241,26 @@ struct WebtoonReaderView: UIViewRepresentable {
                     self.relayout()
                 }
             }
+        }
+
+        // MARK: - Loading indicator
+
+        private func beginLoad() {
+            pendingLoads += 1
+            positionIndicator()
+            indicator?.startAnimating()
+        }
+
+        private func endLoad() {
+            pendingLoads = max(0, pendingLoads - 1)
+            if pendingLoads == 0 { indicator?.stopAnimating() }
+        }
+
+        /// 把转圈摆到当前可视区中心（contentOffset 走了它得跟着走）。
+        private func positionIndicator() {
+            guard let scrollView, let ind = indicator else { return }
+            ind.center = CGPoint(x: scrollView.contentOffset.x + scrollView.bounds.width / 2,
+                                 y: scrollView.contentOffset.y + scrollView.bounds.height / 2)
         }
 
         // MARK: - Tap
@@ -238,11 +279,13 @@ struct WebtoonReaderView: UIViewRepresentable {
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             // 缩放后重新加载可视页（缩放改变了可视范围）。
             loadVisiblePages()
+            positionIndicator()
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             loadVisiblePages()
             updateProgress(scrollView)
+            positionIndicator()
 
             // 底部 overshoot 换章（只在 1x 时，放大看细节不误触发）。
             guard scrollView.zoomScale < 1.05 else { return }
