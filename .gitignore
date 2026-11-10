@@ -1,0 +1,17 @@
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+*.ipa
+build.log
+Payload/
+
+# 本地凭据 / 发布配置：绝不进公开仓库
+_out/
+.dav-creds
+*.dav-creds
+.env
+.env.*
+__pycache__/
+*.pyc

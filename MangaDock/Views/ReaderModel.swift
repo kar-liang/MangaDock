@@ -1,0 +1,637 @@
+import Foundation
+import UIKit
+import SwiftUI
+
+private let enhanceDefaultsKey = "mangadock.enhance"
+
+enum StepOutcome {
+    case moved
+    case atStart
+    case atEnd
+    case loadNextChapter
+}
+
+@MainActor
+final class ReaderModel: ObservableObject {
+    @Published private(set) var currentItem: WebDAVItem
+    @Published private(set) var series: [WebDAVItem] = []
+    @Published private(set) var seriesIndex: Int = 0
+
+    @Published private(set) var pageCount: Int = 0
+    @Published var index: Int = 0
+    @Published var isLoading: Bool = true
+    @Published var statusText: String = "正在打开…"
+    @Published var downloadProgress: Double? = nil
+    @Published var errorMessage: String? = nil
+    @Published var chapterError: String? = nil
+    @Published var enhance: Bool = false
+    /// Per-comic AI scale (2 or 4), defaulting to the global setting.
+    @Published var aiScale: Int = 2
+    /// Bumped whenever the enhance mode (on/off or 2x/4x) changes, so visible
+    /// pages know to drop their decoded image and re-render.
+    @Published private(set) var enhanceGeneration = 0
+
+    private var source: ComicPageSource?
+    private var client: RemoteClient?
+    private let imageCache = NSCache<NSNumber, UIImage>()
+    /// Remembered width/height per page so vertical scrolling keeps stable heights
+    /// even after LazyVStack throws the page view away.
+    private var pageAspects: [Int: CGFloat] = [:]
+
+    init(item: WebDAVItem) {
+        currentItem = item
+        imageCache.countLimit = 12
+        // Budget by BYTES, not by entry count: one 2200px webtoon page is
+        // ~25 MB decoded, so "10 items" could mean 250 MB and iOS would start
+        // killing caches behind our back (which is one source of the black
+        // flash mid-scroll).
+        imageCache.totalCostLimit = 240 * 1024 * 1024
+    }
+
+    func aspect(for position: Int) -> CGFloat {
+        pageAspects[position] ?? 0.72
+    }
+
+    // MARK: - Derived
+
+    var nextItem: WebDAVItem? {
+        seriesIndex + 1 < series.count ? series[seriesIndex + 1] : nil
+    }
+
+    var previousItem: WebDAVItem? {
+        seriesIndex > 0 ? series[seriesIndex - 1] : nil
+    }
+
+    /// Real pages plus the "本话看完" card when a next chapter exists.
+    var displayPageCount: Int {
+        pageCount + (nextItem != nil ? 1 : 0)
+    }
+
+    var isOnChapterEndCard: Bool {
+        pageCount > 0 && index >= pageCount
+    }
+
+    var chapterLabel: String {
+        guard series.count > 1 else { return "" }
+        // Show the real chapter number, not the array position. The chapter list
+        // can be reversed while `series` is always ascending, so a position was
+        // easy to misread as "it opened the wrong chapter".
+        if let number = Self.chapterNumber(in: currentItem.displayName) {
+            return "第 \(number) 话 · \(seriesIndex + 1)/\(series.count)"
+        }
+        return "第 \(seriesIndex + 1) / \(series.count) 话"
+    }
+
+    /// Pulls "770" out of a name like "一人之下 - 第770话 770 点将".
+    static func chapterNumber(in name: String) -> String? {
+        guard let range = name.range(of: "第\\s*[0-9]+\\s*话",
+                                     options: .regularExpression) else { return nil }
+        let digits = name[range].filter { $0.isNumber }
+        return digits.isEmpty ? nil : String(digits)
+    }
+
+    func toggleEnhance() {
+        setEnhance(on: !enhance)
+    }
+
+    /// Toolbar entry: turns enhancement on/off and optionally picks the AI scale.
+    /// Bumps `enhanceGeneration` so visible pages re-render with the new mode.
+    func setEnhance(on: Bool, scale: AIEnhancer.Scale? = nil) {
+        let changed = on != enhance || (scale != nil && scale!.rawValue != aiScale)
+        guard changed else { return }
+        enhance = on
+        if let scale { aiScale = scale.rawValue }
+        PerComicPrefs.setEnhance(on, for: currentItem.url)
+        PerComicPrefs.setAIScale(aiScale, for: currentItem.url)
+        imageCache.removeAllObjects()
+        prewarming.removeAll()
+        pageTasks.removeAll()
+        enhanceGeneration += 1
+        prewarm(from: index + 1)
+    }
+
+    // MARK: - Loading
+
+    func start(client: RemoteClient, startPage: Int) async {
+        self.client = client
+        let started = Date()
+        diag("reader", "open name=\(currentItem.name) startPage=\(startPage) url=\(currentItem.url.absoluteString)")
+        isLoading = true
+        errorMessage = nil
+        chapterError = nil
+
+        let seriesStarted = Date()
+        await buildSeries(client: client)
+        diag("timing", "buildSeries \(diagElapsed(seriesStarted)) series=\(series.count)")
+
+        do {
+            let prepStarted = Date()
+            let prepared = try await prepare(item: currentItem, client: client)
+            diag("timing", "prepare \(diagElapsed(prepStarted)) pages=\(prepared.pageCount)")
+            adopt(item: currentItem, source: prepared, startPage: startPage)
+            let warmStarted = Date()
+            await warmVisiblePages()
+            diag("timing", "warmVisible \(diagElapsed(warmStarted))")
+            isLoading = false
+            diag("timing", "open ready \(diagElapsed(started))")
+        } catch {
+            errorMessage = Self.message(for: error)
+            isLoading = false
+        }
+    }
+
+    /// Local-file path: no WebDAV client, read straight off disk.
+    func startLocal(startPage: Int) async {
+        let started = Date()
+        isLoading = true
+        errorMessage = nil
+        chapterError = nil
+        series = [currentItem]
+        seriesIndex = 0
+
+        do {
+            let prepStarted = Date()
+            let prepared = try await prepareLocal(item: currentItem)
+            diag("timing", "prepareLocal \(diagElapsed(prepStarted)) pages=\(prepared.pageCount)")
+            adopt(item: currentItem, source: prepared, startPage: startPage)
+            await warmVisiblePages()
+            isLoading = false
+            diag("timing", "open local ready \(diagElapsed(started))")
+        } catch {
+            errorMessage = Self.message(for: error)
+            isLoading = false
+        }
+    }
+
+    private func prepareLocal(item: WebDAVItem) async throws -> ComicPageSource {
+        return try await Task.detached(priority: .userInitiated) { () -> ComicPageSource in
+            if item.isPDF { return try PDFComicSource(fileURL: item.url) }
+            return try ZipComicSource(fileURL: item.url)
+        }.value
+    }
+
+    /// Sibling chapters come from the parent folder. Same kind only — a folder of
+    /// image chapters walks to other folders, a CBZ walks to other CBZ files.
+    /// Offline: when the folder can't be listed, fall back to the chapters that
+    /// were downloaded, so chapter-to-chapter reading still works with no
+    /// network at all.
+    private func buildSeries(client: RemoteClient) async {
+        guard let parent = Self.parentURL(of: currentItem.url) else {
+            fallbackSeries()
+            return
+        }
+
+        // 父目录几乎一定刚在系列页列过。先用缓存，避免每切一章都打一次
+        // PROPFIND —— 这是全 App 频率最高的重复请求。
+        var children = FolderLoader.cachedItems(for: parent)
+        if children == nil, let fresh = try? await client.list(parent) {
+            FolderLoader.store(fresh, for: parent)
+            children = fresh
+        }
+        guard let children, !children.isEmpty else {
+            fallbackSeries()
+            return
+        }
+
+        let wantsFolders = currentItem.isDirectory
+        var candidates = children.filter {
+            wantsFolders ? $0.isDirectory : ($0.isArchive || $0.isPDF)
+        }
+
+        if !candidates.contains(where: { $0.id == currentItem.id }) {
+            candidates.append(currentItem)
+        }
+        candidates.sort { NaturalSort.less($0.name, $1.name) }
+
+        series = candidates
+        if let index = candidates.firstIndex(where: { $0.id == currentItem.id }) {
+            seriesIndex = index
+        } else {
+            // Shouldn't happen (currentItem is appended when missing), but if it
+            // does the reader would silently point at chapter 1.
+            diag("series", "current NOT FOUND among \(candidates.count) candidates: \(currentItem.name)")
+            seriesIndex = 0
+        }
+        logSeries()
+    }
+
+    /// 列不到目录时的兜底：只用已下载的章节，断网也能连续读。
+    private func fallbackSeries() {
+        let offline = DownloadStore.shared.downloadedSiblings(of: currentItem)
+        if let index = offline.firstIndex(where: { $0.id == currentItem.id }) {
+            series = offline
+            seriesIndex = index
+        } else {
+            series = [currentItem]
+            seriesIndex = 0
+        }
+    }
+
+    /// Records the series the reader computed. The chapter label is derived
+    /// from `seriesIndex`, so a wrong index shows up here immediately.
+    private func logSeries() {
+        guard seriesIndex >= 0, seriesIndex < series.count else {
+            diag("series", "index out of range \(seriesIndex)/\(series.count) current=\(currentItem.name)")
+            return
+        }
+        let previous = seriesIndex > 0 ? series[seriesIndex - 1].name : "-"
+        let next = seriesIndex + 1 < series.count ? series[seriesIndex + 1].name : "-"
+        diag("series", "count=\(series.count) index=\(seriesIndex + 1) prev=\(previous) cur=\(series[seriesIndex].name) next=\(next)")
+    }
+
+    private func prepare(item: WebDAVItem, client: RemoteClient, silent: Bool = false) async throws -> ComicPageSource {
+        // Offline first: a downloaded chapter reads straight off disk, no
+        // network round-trip and no waiting.
+        if let local = await DownloadStore.shared.localSource(for: item.url) {
+            diag("prepare", "LOCAL \(item.name) pages=\(local.pageCount)")
+            if !silent {
+                statusText = "正在读取本地下载…"
+                downloadProgress = nil
+            }
+            return local
+        }
+
+        // Komga 的书：URL 是虚拟的 komga://book/{id}，页数问一次再按需取页
+        if item.url.scheme == "komga" {
+            guard let komga = client as? KomgaClient else { throw KomgaError.badResponse }
+            guard let bookID = KomgaClient.bookID(from: item.url) else { throw KomgaError.badURL }
+            if !silent { statusText = "正在读取 Komga…" }
+            let count = try await komga.pageCount(bookID: bookID)
+            guard count > 0 else {
+                throw ZipError.unsupported("这本书在 Komga 上没有可显示的页面")
+            }
+            diag("prepare", "KOMGA \(item.name) pages=\(count)")
+            if !silent { downloadProgress = nil }
+            return KomgaComicSource(bookID: bookID, pageCount: count, client: komga)
+        }
+
+        if item.isArchive || item.isPDF {
+            let cacheURL = CacheManager.archiveURL(for: item.url)
+            let cached = CacheManager.hasArchive(for: item.url)
+
+            // 没下载过的 CBZ：先走远程随机读，别等整包。
+            // 整包几十 MB，5G 上要几十秒；Range 读两次请求就能出第一页。
+            // 不自动补下整包 —— 老大常在移动网络上看，别偷跑流量。
+            // 想要后续零延迟，用「下载本章」。
+            if !cached, item.isArchive, let webdav = client as? WebDAVClient,
+               let remote = try? await RemoteZipComicSource(url: item.url, client: webdav) {
+                // 验证第一页能读。AI 超分大图 CBZ 的 Range 读可能失败
+                // （服务器 Range 限制 / 大 payload 超时），失败就回退整包下载，
+                // 保证能加载，而不是「初始化成功但每页都读不出来」。
+                if remote.pageCount > 0, (try? await remote.pageData(at: 0)) != nil {
+                    diag("prepare", "REMOTEZIP \(item.name) pages=\(remote.pageCount)")
+                    if !silent {
+                        statusText = ""
+                        downloadProgress = nil
+                    }
+                    return remote
+                }
+                diag("prepare", "REMOTEZIP first page failed, fallback to full download: \(item.name)")
+            }
+
+            if !cached {
+                guard let webdav = client as? WebDAVClient else {
+                    throw ZipError.unsupported("这个服务器不支持整包下载")
+                }
+                if !silent { statusText = "正在下载 \(item.displayName)…" }
+                try await webdav.download(item.url, to: cacheURL) { [weak self] value in
+                    guard !silent else { return }
+                    Task { @MainActor [weak self] in
+                        self?.downloadProgress = value
+                    }
+                }
+            }
+            if !silent {
+                statusText = item.isPDF ? "正在解析 PDF…" : "正在解压目录…"
+                downloadProgress = nil
+            }
+            let url = cacheURL
+            let isPDF = item.isPDF
+            diag("prepare", "ARCHIVE \(item.name) cached=\(CacheManager.hasArchive(for: item.url))")
+            do {
+                return try await Task.detached(priority: .userInitiated) { () -> ComicPageSource in
+                    if isPDF { return try PDFComicSource(fileURL: url) }
+                    return try ZipComicSource(fileURL: url)
+                }.value
+            } catch {
+                CacheManager.removeArchive(for: item.url)
+                throw error
+            }
+        }
+
+        if !silent { statusText = "正在读取目录…" }
+        let children = try await client.list(item.requestURL)
+        let images = children
+            .filter { !$0.isDirectory && $0.isImage }
+            .sorted { NaturalSort.less($0.name, $1.name) }
+        guard !images.isEmpty else {
+            throw ZipError.unsupported("这个文件夹里没有图片")
+        }
+        diag("prepare", "NETDIR \(item.name) pages=\(images.count)")
+        return FolderComicSource(items: images, client: client)
+    }
+
+    private func adopt(item: WebDAVItem, source: ComicPageSource, startPage: Int) {
+        diag("adopt", "name=\(item.name) pages=\(source.pageCount) startPage=\(startPage)")
+        preparedNext = nil
+        currentItem = item
+        self.source = source
+        pageCount = source.pageCount
+        index = min(max(0, startPage), max(0, pageCount - 1))
+        imageCache.removeAllObjects()
+        // Stale in-flight positions from the previous chapter would otherwise
+        // block prewarming for the new one.
+        prewarming.removeAll()
+        pageTasks.removeAll()
+        downloadProgress = nil
+        chapterError = nil
+        // Per-comic enhance/scale, falling back to the global defaults.
+        enhance = PerComicPrefs.enhanceEnabled(for: item.url,
+                                               default: UserDefaults.standard.bool(forKey: enhanceDefaultsKey))
+        aiScale = PerComicPrefs.aiScale(for: item.url,
+                                        default: ImageEnhancer.aiScale.rawValue)
+    }
+
+    /// 解码当前屏可见的图片，加载圈期间显示进度，图片进 imageCache。
+    /// 之后 content 显示时直接从缓存取，不再黑屏等待解码。
+    /// 分页可见 1 页、条漫视口约 2-3 页，统一解码前 3 页覆盖两种情况。
+    private func warmVisiblePages() async {
+        guard pageCount > 0 else { return }
+        // 只预热「当前 + 下一话前 1 页」。
+        // 预热 3 页时，超长条漫每页 89MB × 3 = 267MB > 缓存上限，
+        // 第一页在预热阶段就被 LRU 挤出去，显示时还要再解一次 —— 白干。
+        let end = min(pageCount, index + 2)
+        for position in index..<end {
+            if Task.isCancelled { return }
+            statusText = "正在加载第 \(position + 1) / \(pageCount) 页"
+            _ = await preparePage(position)
+        }
+    }
+
+    // MARK: - Chapter switching
+
+    /// Pre-loaded next chapter, keyed by its series index.
+    private var preparedNext: (index: Int, source: ComicPageSource)?
+    private var preloadingNext = false
+
+    /// 下一话预取多少页。prepare 只把页面列表列出来，图仍然要翻到才下载，
+    /// 所以这里把开头几页先抓下来 —— 翻过去才是真的秒开。
+    private static let prefetchPages = 5
+    /// 距离结尾还有这么多页时就开始准备。
+    private static let preloadTrigger = 5
+
+    /// Background-prepares the next chapter once the reader is near the end,
+    /// so tapping/overscrolling into it is instant.
+    func preloadNextChapterIfNeeded() {
+        guard let client, pageCount > 0, index >= pageCount - Self.preloadTrigger else { return }
+        let target = seriesIndex + 1
+        guard target >= 0, target < series.count else { return }
+        guard preparedNext?.index != target, !preloadingNext else { return }
+
+        preloadingNext = true
+        let item = series[target]
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.preloadingNext = false }
+            guard let source = try? await self.prepare(item: item, client: client, silent: true) else {
+                return
+            }
+            self.preparedNext = (target, source)
+            // 只对远程目录源预取。本地解压 / PDF 渲染本来就不用等网络，
+            // 预取纯属浪费 IO 和 CPU。
+            if source is FolderComicSource {
+                await Self.fetchLeadingPages(of: source)
+            }
+        }
+    }
+
+    private static func fetchLeadingPages(of source: ComicPageSource) async {
+        let total = source.pageCount
+        guard total > 0 else { return }
+        for index in 0..<min(total, prefetchPages) {
+            if Task.isCancelled { return }
+            _ = try? await source.pageData(at: index)
+        }
+    }
+
+    /// Jumps to any chapter of this series (reader's chapter picker). Unlike
+    /// `advanceChapter` it can move an arbitrary distance.
+    @discardableResult
+    func jump(to target: Int, startPage: Int = 0) async -> Bool {
+        guard let client, target >= 0, target < series.count, target != seriesIndex else {
+            return false
+        }
+
+        let item = series[target]
+        chapterError = nil
+        isLoading = true
+
+        do {
+            let prepared = try await prepare(item: item, client: client)
+            adopt(item: item, source: prepared, startPage: startPage)
+            seriesIndex = target
+            await warmVisiblePages()
+            isLoading = false
+            diag("reader", "jump to=\(item.name) startPage=\(startPage)")
+            return true
+        } catch {
+            chapterError = Self.message(for: error)
+            isLoading = false
+            return false
+        }
+    }
+
+    @discardableResult
+    func advanceChapter(direction: Int) async -> Bool {
+        guard let client else { return false }
+        let target = seriesIndex + direction
+        guard target >= 0, target < series.count else { return false }
+
+        // Reuse the pre-loaded next chapter when moving forward.
+        if direction == 1, let p = preparedNext, p.index == target {
+            adopt(item: series[target], source: p.source, startPage: 0)
+            preparedNext = nil
+            seriesIndex = target
+            return true
+        }
+
+        chapterError = nil
+        isLoading = true
+
+        do {
+            let prepared = try await prepare(item: series[target], client: client)
+            adopt(item: series[target], source: prepared, startPage: 0)
+            seriesIndex = target
+            await warmVisiblePages()
+            isLoading = false
+            return true
+        } catch {
+            chapterError = Self.message(for: error)
+            isLoading = false
+            return false
+        }
+    }
+
+    // MARK: - Paging
+
+    @discardableResult
+    func step(_ delta: Int) -> StepOutcome {
+        guard pageCount > 0 else { return .atStart }
+        let last = max(0, displayPageCount - 1)
+        let target = index + delta
+
+        if target > last {
+            if delta == 1, nextItem != nil { return .loadNextChapter }
+            index = last
+            return .moved
+        }
+        if target < 0 { return .atStart }
+        index = target
+        return .moved
+    }
+
+    // MARK: - Page images
+
+    func image(at position: Int) async -> UIImage? {
+        await preparePage(position)
+    }
+
+    /// Decodes already running, keyed by cache key. A visible page used to
+    /// start a second decode of the very bytes its pre-render was already
+    /// working on — that duplicated work is half of the perceived lag.
+    private var pageTasks: [Int: Task<UIImage?, Never>] = [:]
+
+    /// Decodes + enhances a page and stores it in the cache. Used both for the
+    /// visible page and for background pre-rendering of upcoming pages.
+    @discardableResult
+    private func preparePage(_ position: Int) async -> UIImage? {
+        guard let source, position >= 0, position < source.pageCount else { return nil }
+
+        let cacheKey = position * 2 + (enhance ? 1 : 0)
+        let key = NSNumber(value: cacheKey)
+        if let cached = imageCache.object(forKey: key) { return cached }
+
+        // Join the in-flight decode instead of starting another one.
+        if let running = pageTasks[cacheKey] {
+            return await running.value
+        }
+
+        let task = Task<UIImage?, Never> { [weak self] in
+            guard let self else { return nil }
+            return await self.decode(position: position, source: source, key: key)
+        }
+        pageTasks[cacheKey] = task
+        let image = await task.value
+        pageTasks[cacheKey] = nil
+        return image
+    }
+
+    private func decode(position: Int, source: ComicPageSource, key: NSNumber) async -> UIImage? {
+        do {
+            let ioStarted = Date()
+            let data = try await source.pageData(at: position)
+            let ioCost = diagElapsed(ioStarted)
+            let wantsEnhance = enhance
+            let useAI = wantsEnhance && ImageEnhancer.hasAIModel
+            let decodeStarted = Date()
+            let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                guard let base = ImageDecoder.downsample(data) else { return nil }
+                if useAI { return base }                     // AI gets the clean decode
+                guard wantsEnhance else { return base }
+                return ImageEnhancer.enhance(base) ?? base
+            }.value
+            let outSize = decoded.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "nil"
+            diag("decode", "p\(position + 1) io=\(ioCost) \(diagBytes(data.count)) dec=\(diagElapsed(decodeStarted)) out=\(outSize) enh=\(wantsEnhance)")
+
+            // AI super-resolution on top of the clean decode. Slow (seconds per
+            // page) — acceptable because it only runs when enhance is on.
+            if useAI, let decoded,
+               let ai = await ImageEnhancer.enhanceAI(decoded, scale: AIEnhancer.Scale(rawValue: aiScale) ?? .two) {
+                imageCache.setObject(ai, forKey: key, cost: Self.cost(of: ai))
+                let size = ai.size
+                if size.height > 0 {
+                    pageAspects[position] = size.width / size.height
+                }
+                return ai
+            }
+
+            if let decoded {
+                imageCache.setObject(decoded, forKey: key, cost: Self.cost(of: decoded))
+                let size = decoded.size
+                if size.height > 0 {
+                    pageAspects[position] = size.width / size.height
+                }
+            }
+            return decoded
+        } catch {
+            return nil
+        }
+    }
+
+    /// Pages currently being pre-rendered, so repeated triggers don't queue
+    /// duplicate work (onAppear fires often while scrolling).
+    private var prewarming: Set<Int> = []
+
+    /// Background pre-renders the next few pages so turning or scrolling is
+    /// instant.
+    ///
+    /// This runs in BOTH modes. It used to be gated on AI enhancement, on the
+    /// theory that plain decoding was fast enough — it isn't: decoding a
+    /// 2200px webtoon page costs a few hundred milliseconds, which is exactly
+    /// the "black page + spinner" you'd see after flicking ahead.
+    func prewarm(from index: Int, count: Int = 3) {
+        guard source != nil, pageCount > 0 else { return }
+        // AI super-resolution takes seconds per page, so don't run ahead as far.
+        let wanted = (enhance && ImageEnhancer.hasAIModel) ? min(count, 2) : count
+        let end = min(pageCount, index + wanted)
+        guard index >= 0, index < end else { return }
+
+        // Cache key depends on the mode — the old code always probed the
+        // enhanced slot, so with enhancement off nothing ever counted as
+        // "already rendered" and every prewarm re-decoded the page.
+        let slot = enhance ? 1 : 0
+
+        for position in index..<end {
+            // 同时最多 3 个后台解码。原来写死 2，A 系芯片解码一页 2200px
+            // 长图要 300ms 上下，2 个并发追不上连续翻页的节奏。
+            if prewarming.count >= 3 { break }
+
+            let key = NSNumber(value: position * 2 + slot)
+            guard imageCache.object(forKey: key) == nil,
+                  !prewarming.contains(position) else { continue }
+            prewarming.insert(position)
+            Task { [weak self] in
+                await self?.preparePage(position)
+                self?.prewarming.remove(position)
+            }
+        }
+    }
+
+    /// 往回翻时也预热一页。用户往回看上一页很常见，没预热就是同样的转圈。
+    func prewarmPrevious(from index: Int) {
+        prewarm(from: index - 1, count: 1)
+    }
+
+    /// Decoded byte size, for NSCache's byte-based eviction.
+    private static func cost(of image: UIImage) -> Int {
+        if let cg = image.cgImage {
+            return cg.bytesPerRow * cg.height
+        }
+        return Int(image.size.width * image.size.height * 4)
+    }
+
+    // MARK: - Helpers
+
+    private static func message(for error: Error) -> String {
+        NetErrorText.friendly(error)
+    }
+
+    static func parentURL(of url: URL) -> URL? {
+        var text = url.absoluteString
+        while text.hasSuffix("/") && text.count > 8 { text.removeLast() }
+        guard let clean = URL(string: text) else { return nil }
+        let parent = clean.deletingLastPathComponent()
+        guard parent.absoluteString.count >= 8 else { return nil }
+        return WebDAVItem.directoryURL(parent)
+    }
+}

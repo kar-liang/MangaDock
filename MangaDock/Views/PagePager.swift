@@ -1,0 +1,169 @@
+import SwiftUI
+import UIKit
+
+protocol PagerPage: AnyObject {
+    var pageIndex: Int { get set }
+}
+
+/// UIPageViewController wrapper. SwiftUI's TabView(.page) keeps every page view
+/// alive, which blows up memory on a 200-page chapter — this only holds ~3.
+///
+/// Taps are handled by a UITapGestureRecognizer that recognises *simultaneously*
+/// with the pager's pan gesture. Doing it with a SwiftUI overlay instead would
+/// swallow the swipe: the overlay becomes the hit-test target and the paging
+/// scroll view underneath never sees the drag.
+struct PagePager: UIViewControllerRepresentable {
+    @ObservedObject var model: ReaderModel
+    @Binding var index: Int
+    /// 日漫模式：翻页方向反转（书从右装订，下一页在左边）
+    var isRightToLeft: Bool = false
+
+    var onTapLeft: () -> Void = {}
+    var onTapCenter: () -> Void = {}
+    var onTapRight: () -> Void = {}
+    /// 缩放状态变化（放大 = true），上报给 ReaderView。
+    var onZoomChanged: ((Bool) -> Void)? = nil
+    /// 当前页是否处于放大状态（由 ReaderView 回传），放大时左右点击不翻页。
+    var isPageZoomed: Bool = false
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let controller = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal,
+            options: nil
+        )
+        controller.dataSource = context.coordinator
+        controller.delegate = context.coordinator
+        controller.view.backgroundColor = .white   // 分页模式白底
+
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handleTap(_:)))
+        tap.delegate = context.coordinator
+        tap.cancelsTouchesInView = false
+        tap.requiresExclusiveTouchType = false
+        controller.view.addGestureRecognizer(tap)
+
+        if model.displayPageCount > 0 {
+            controller.setViewControllers([context.coordinator.controller(for: index)],
+                                          direction: .forward,
+                                          animated: false)
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIPageViewController, context: Context) {
+        context.coordinator.parent = self
+        guard model.displayPageCount > 0, !context.coordinator.isAnimating else { return }
+
+        if let current = controller.viewControllers?.first as? PagerPage,
+           current.pageIndex == index {
+            return
+        }
+        controller.setViewControllers([context.coordinator.controller(for: index)],
+                                      direction: .forward,
+                                      animated: false)
+    }
+    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate,
+                              UIGestureRecognizerDelegate {
+        var parent: PagePager
+        var isAnimating = false
+
+        init(_ parent: PagePager) {
+            self.parent = parent
+        }
+
+        func controller(for position: Int) -> UIViewController {
+            if position < parent.model.pageCount {
+                let host = ComicPageHost(rootView: ComicPageView(model: parent.model,
+                                                                 index: position,
+                                                                 onZoomChanged: parent.onZoomChanged))
+                host.pageIndex = position
+                return host
+            }
+            // 结尾页停住，要明确点「继续阅读」才换话。
+            // 原来这里是 autoAdvance: true —— 滑到结尾页立刻跳走，根本看不清卡片内容。
+            // 条漫那边本来就要「再拉一下」，现在两边统一：都停在卡片上，人工决定。
+            let host = ChapterEndHost(rootView: ChapterEndView(model: parent.model))
+            host.pageIndex = position
+            return host
+        }
+
+        // MARK: Taps
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard let view = gesture.view, view.bounds.width > 0 else { return }
+            let x = gesture.location(in: view).x
+            let width = view.bounds.width
+            if x < width * 0.33 {
+                // 放大状态下左右点击不翻页（避免缩放被翻页抵消），
+                // 只有 fit 状态才响应左右翻页。
+                guard !parent.isPageZoomed else { return }
+                parent.onTapLeft()
+            } else if x > width * 0.67 {
+                guard !parent.isPageZoomed else { return }
+                parent.onTapRight()
+            } else {
+                parent.onTapCenter()
+            }
+        }
+
+        /// 让 tap 与翻页 pan、页内 pinch 同时识别。这个返回 true 是双指缩放
+        /// 不被 UIPageViewController 翻页手势抢走的关键。
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        // MARK: Paging
+
+        /// 日漫模式下 before/after 对调：手指往右滑才是「下一页」。
+        func pageViewController(_ pageViewController: UIPageViewController,
+                                viewControllerBefore viewController: UIViewController) -> UIViewController? {
+            guard let page = viewController as? PagerPage else { return nil }
+            let target = parent.isRightToLeft ? page.pageIndex + 1 : page.pageIndex - 1
+            guard target >= 0, target < parent.model.displayPageCount else { return nil }
+            return controller(for: target)
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController,
+                                viewControllerAfter viewController: UIViewController) -> UIViewController? {
+            guard let page = viewController as? PagerPage else { return nil }
+            let target = parent.isRightToLeft ? page.pageIndex - 1 : page.pageIndex + 1
+            guard target >= 0, target < parent.model.displayPageCount else { return nil }
+            return controller(for: target)
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController,
+                                willTransitionTo pendingViewControllers: [UIViewController]) {
+            isAnimating = true
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController,
+                                didFinishAnimating finished: Bool,
+                                previousViewControllers: [UIViewController],
+                                transitionCompleted completed: Bool) {
+            isAnimating = false
+            guard completed,
+                  let page = pageViewController.viewControllers?.first as? PagerPage else { return }
+            parent.index = page.pageIndex
+
+            // 滑到章节结尾页 = 想看下一话，直接换章，不用再点按钮。
+            // 放在这里而不是 ChapterEndView.onAppear：UIKit 的翻页回调更可靠。
+            if page.pageIndex >= parent.model.pageCount {
+                Task { await parent.model.advanceChapter(direction: 1) }
+            }
+        }
+    }
+}
+
+final class ComicPageHost: UIHostingController<ComicPageView>, PagerPage {
+    var pageIndex: Int = 0
+}
+
+final class ChapterEndHost: UIHostingController<ChapterEndView>, PagerPage {
+    var pageIndex: Int = 0
+}

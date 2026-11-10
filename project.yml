@@ -1,0 +1,83 @@
+name: MangaDock
+options:
+  bundleIdPrefix: com.karliang
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  MangaDock:
+    type: application
+    platform: iOS
+    sources:
+      - path: MangaDock
+        excludes:
+          - "Resources/SuperResolution.mlpackage/**"
+          # 不进普通资源递归：.icon 是一个「文档」，由 actool 整体编译
+          - "AppIcon.icon/**"
+      - path: MangaDock/Resources/SuperResolution.mlpackage
+        buildPhase: sources
+        type: file
+      # Xcode 26 的 Icon Composer 分层图标。type 必须是 file（不是 folder）：
+      # 对 Xcode 来说它跟 .xcassets 一样是单个文档，actool 才会编译出
+      # 带液态玻璃高光/折射的图标，并自动生成老系统的降级尺寸。
+      - path: MangaDock/AppIcon.icon
+        type: file
+    settings:
+      base:
+        PRODUCT_NAME: MangaDock
+        PRODUCT_BUNDLE_IDENTIFIER: com.karliang.mangadock
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "2.6"
+        CURRENT_PROJECT_VERSION: "132"
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: Support/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: 漫画坞
+        CFBundleIconName: AppIcon
+        CFBundleShortVersionString: "2.6"
+        CFBundleVersion: "132"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: 漫画坞需要访问局域网中的 WebDAV 服务器来读取你的漫画文件。
+        NSPhotoLibraryAddUsageDescription: 用于保存你从漫画里分享的页面。
+        NSFaceIDUsageDescription: 用于解锁隐私空间，验证是你本人后才会显示隐藏的漫画。
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+
+schemes:
+  MangaDock:
+    build:
+      targets:
+        MangaDock: all
+    run:
+      config: Debug
+    archive:
+      config: Release

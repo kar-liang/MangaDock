@@ -1,0 +1,9 @@
+Real-ESRGAN x4plus anime 6B
+Authors: Xintao Wang, Liangbin Xie, Chao Dong, Ying Shan (Tencent ARC Lab)
+Project: https://github.com/xinntao/Real-ESRGAN
+Paper: Real-ESRGAN: Training Real-World Blind Super-Resolution with Pure Synthetic Data (https://arxiv.org/abs/2107.10833)
+Licence: BSD-3-Clause (Copyright (c) 2021, Xintao Wang)
+Original weights: https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth
+
+Converted to a Core ML ML Program (fp16) with a fixed 512x512 RGB image input; output clamped to [0, 1] and scaled to 0-255. Weights unchanged.
+Conversion and hosting: ddutchie/archwiz-upscalers on Hugging Face.
