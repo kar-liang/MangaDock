@@ -46,8 +46,46 @@ enum SyncService {
         UserDefaults.standard.object(forKey: lastSyncKey) as? Date
     }
 
+    /// 同步目录（相对 WebDAV 根）。留空 = 根目录，和 Android 的 `syncDir` 是同一个键。
+    static let folderKey = "mangadock.sync.folder"
+
+    static var folder: String {
+        (UserDefaults.standard.string(forKey: folderKey) ?? "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+    }
+
+    /// 同步文件的位置。两端（iOS / Android）都按「目录 + 固定文件名」拼，
+    /// 所以只要目录填成一样，写的就是同一个文件。
     static func syncURL(baseURL: URL) -> URL {
-        baseURL.appendingPathComponent(fileName)
+        var url = baseURL
+        for comp in folder.split(separator: "/") where !comp.isEmpty {
+            url.appendPathComponent(String(comp), isDirectory: true)
+        }
+        return url.appendingPathComponent(fileName)
+    }
+
+    /// 让同步目录存在。自定义目录可能是多级的，逐级 MKCOL；
+    /// 已存在的那一层服务器会回 405，`makeCollection` 内部当成功处理。
+    /// 不做这一步的话，PUT 到不存在的集合会直接 409。
+    static func ensureFolder(client: RemoteClient, baseURL: URL) async {
+        guard !folder.isEmpty, let webdav = client as? WebDAVClient else { return }
+        var url = baseURL
+        for comp in folder.split(separator: "/") where !comp.isEmpty {
+            url.appendPathComponent(String(comp), isDirectory: true)
+            try? await webdav.makeCollection(url)
+        }
+    }
+
+    /// 比较服务器地址时忽略尾部斜杠和大小写 —— 换个写法不该被当成"另一个服务器"。
+    private static func normalizeServer(_ raw: String) -> String {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // 协议也去掉：一台设备填 http:// 另一台漏了，不该被当成"另一个服务器"
+        for prefix in ["http://", "https://"] where t.hasPrefix(prefix) {
+            t.removeFirst(prefix.count)
+            break
+        }
+        while t.hasSuffix("/") && t.count > 4 { t.removeLast() }
+        return t
     }
 
     // MARK: - Snapshot
@@ -84,8 +122,11 @@ enum SyncService {
               let base = store.baseURL(for: .webdav) else { return }
         let payload = payload(store: store, shelf: shelf)
         guard let data = try? JSONEncoder().encode(payload) else { return }
+        await ensureFolder(client: client, baseURL: base)
         do {
-            try await client.upload(data, to: syncURL(baseURL: base))
+            let target = syncURL(baseURL: base)
+            let body = await carryingForeignSections(data, client: client, from: target)
+            try await client.upload(body, to: target)
             // Remember what we just wrote, otherwise the next automatic pull
             // would treat our own payload as "older" and could overwrite it.
             UserDefaults.standard.set(payload.updatedAt, forKey: updatedAtKey)
@@ -105,14 +146,39 @@ enum SyncService {
         guard let data = try? JSONEncoder().encode(payload) else {
             return "本地数据打包失败"
         }
+        await ensureFolder(client: client, baseURL: base)
         do {
-            try await client.upload(data, to: syncURL(baseURL: base))
+            let target = syncURL(baseURL: base)
+            let body = await carryingForeignSections(data, client: client, from: target)
+            try await client.upload(body, to: target)
             UserDefaults.standard.set(payload.updatedAt, forKey: updatedAtKey)
             UserDefaults.standard.set(Date(), forKey: lastSyncKey)
             return "已上传：书架 \(shelf.count) 本 · 进度 \(store.recent.count) 条"
         } catch {
             return "上传失败：\(NetErrorText.friendly(error))"
         }
+    }
+
+    /// 把文件里**别的客户端**写的那几段原样搬回来。
+    ///
+    /// Android 把它的设置放在顶层的 `android` 对象里（Android 用整型下标、
+    /// iOS 用枚举字符串，语义对不上，所以各存各的、谁也不解释谁）。麻烦在于
+    /// 本端打包时只会写自己认识的键 —— 不搬的话，每次 iOS 上传都会把 Android
+    /// 那段整个抹掉，用户看到的是"在 Android 上改的设置没了"。
+    ///
+    /// 读不到（第一次同步 / 断网）就原样返回，绝不能因此挡住上传。
+    private static func carryingForeignSections(
+        _ data: Data,
+        client: WebDAVClient,
+        from url: URL
+    ) async -> Data {
+        guard let old = try? await client.data(for: url),
+              let oldObj = (try? JSONSerialization.jsonObject(with: old)) as? [String: Any],
+              let foreign = oldObj["android"],
+              var newObj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return data }
+        newObj["android"] = foreign
+        return (try? JSONSerialization.data(withJSONObject: newObj)) ?? data
     }
 
     /// Manual download: the server copy replaces local state unconditionally —
@@ -134,7 +200,7 @@ enum SyncService {
         guard let remote = try? JSONDecoder().decode(SyncPayload.self, from: data) else {
             return "服务器上的同步文件读不出来（可能已损坏）"
         }
-        guard remote.serverURL == store.serverURL else {
+        guard normalizeServer(remote.serverURL) == normalizeServer(store.serverURL) else {
             return "这份数据来自另一个服务器（\(remote.serverURL)），已拒绝覆盖"
         }
 
@@ -158,7 +224,7 @@ enum SyncService {
         }
 
         // Only merge the same server config — never clobber a different server.
-        guard remote.serverURL == store.serverURL else { return false }
+        guard normalizeServer(remote.serverURL) == normalizeServer(store.serverURL) else { return false }
 
         // Last-write-wins.
         let localUpdated = UserDefaults.standard.object(forKey: updatedAtKey) as? Date ?? .distantPast
@@ -181,8 +247,15 @@ enum SyncService {
 
     private static func applySettings(_ s: SyncSettings) {
         let d = UserDefaults.standard
+        // 只写不改：nil 表示"这份 payload 没带这个设置"，**不是**"把它删掉"。
+        //
+        // 这里原本是 nil 就 removeObject，和 Android 端一组合就出事：Android 的
+        // 设置语义完全不同（整型下标 vs 这里的枚举字符串），所以它按约定每次都写
+        // 一个空的 `settings: {}`。以前那种写法意味着 Android 只要上传一次，
+        // iOS 拉回来就会把自己的外观 / 翻页 / 默认布局三项清空，用户看到的是
+        // "换个手机读一下，我的设置没了"。
         func setStr(_ key: String, _ value: String?) {
-            if let value { d.set(value, forKey: key) } else { d.removeObject(forKey: key) }
+            if let value { d.set(value, forKey: key) }
         }
         setStr("mangadock.appearance", s.appearance)
         setStr("mangadock.readerMode", s.readerMode)
