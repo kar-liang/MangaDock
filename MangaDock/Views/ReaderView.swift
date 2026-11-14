@@ -1,9 +1,11 @@
 import SwiftUI
+import Translation
 
 struct ReaderView: View {
     @StateObject private var model: ReaderModel
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var translation = TranslationService.shared
 
     @State private var showBars = true
     @State private var modeOverride: ReaderMode? = nil
@@ -21,6 +23,7 @@ struct ReaderView: View {
     /// 分页模式当前页是否处于放大状态（放大时左右点击不翻页）。
     @State private var isPageZoomed = false
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
+    @AppStorage(TranslationPrefs.enabledKey) private var translationEnabled = false
 
     init(item: WebDAVItem) {
         _model = StateObject(wrappedValue: ReaderModel(item: item))
@@ -75,6 +78,10 @@ struct ReaderView: View {
                     loadingBar
                 }
             }
+
+            if translationEnabled {
+                translationStatusOverlay
+            }
         }
         // 三种模式统一白底，所以固定浅色方案：状态栏、.primary 文字才不会变成白色看不见。
         .preferredColorScheme(.light)
@@ -83,6 +90,15 @@ struct ReaderView: View {
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(!showBars)
         .task { await reload() }
+        // TranslationSession 只能由这个修饰符交进来，拿不到实例就翻不了。
+        // 配置变了 SwiftUI 会取消旧闭包、重启新的，run() 内部对此有兜底。
+        .translationTask(translation.configuration) { session in
+            await translation.run(session: session)
+        }
+        .onChange(of: model.currentItem.url) { _ in
+            // 换章：把上一话的页面状态清掉，不然读几百话会把内存攒满。
+            translation.trim(keepingChapter: model.currentItem.url)
+        }
         .sheet(isPresented: $showChapterList) {
             ReaderChapterListView(chapters: model.series,
                                   currentIndex: model.seriesIndex,
@@ -180,6 +196,7 @@ struct ReaderView: View {
 
     private var verticalReader: some View {
         WebtoonReaderView(model: model,
+                          translation: translation,
                           pageWidth: pageWidth,
                           onTap: toggleBars,
                           onPageChange: { page in
@@ -360,6 +377,7 @@ struct ReaderView: View {
 
             iconButton("list.bullet") { showChapterList = true }
                 .accessibilityLabel("章节列表")
+            translateButton()
             enhanceMenuButton()
             modeMenuButton()
         }
@@ -508,6 +526,68 @@ struct ReaderView: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.3)
+    }
+
+    // MARK: - 翻译
+
+    private var currentPageKey: String {
+        let page = min(max(model.index, 0), max(0, model.pageCount - 1))
+        return TranslationService.key(chapter: model.currentItem.url, page: page)
+    }
+
+    private var currentPagePhase: TranslationPhase {
+        translation.state(for: currentPageKey).phase
+    }
+
+    /// 状态角标：识别中 / 翻译中 / 失败原因。贴在底部工具栏上方，
+    /// 不挡画面中间的内容，也不会被 toolbar 盖住。
+    private var translationStatusOverlay: some View {
+        VStack {
+            Spacer()
+            TranslationStatusBadge(phase: currentPagePhase)
+                .padding(.bottom, showBars ? 78 : 24)
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    /// 翻译开关。开着时图标变橙，再点一下关掉 —— 关掉后画面立刻恢复原样，
+    /// 译文层是纯叠加，不动原图一个像素。
+    private func translateButton() -> some View {
+        Button {
+            toggleTranslation()
+        } label: {
+            Image(systemName: "translate")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 36, height: 34)
+                .foregroundColor(translationEnabled ? .orange : .primary)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(translationEnabled ? "关闭翻译" : "翻译这一页")
+        .contextMenu {
+            Button {
+                Task { await translateCurrentPage(force: true) }
+            } label: {
+                Label("重新识别这一页", systemImage: "arrow.clockwise")
+            }
+        }
+    }
+
+    private func toggleTranslation() {
+        translationEnabled.toggle()
+        guard translationEnabled else { return }
+        Task { await translateCurrentPage() }
+    }
+
+    private func translateCurrentPage(force: Bool = false) async {
+        guard model.pageCount > 0 else { return }
+        let page = min(max(model.index, 0), model.pageCount - 1)
+        guard let data = await model.rawPageData(at: page) else { return }
+        await translation.translate(chapter: model.currentItem.url,
+                                    page: page,
+                                    data: data,
+                                    force: force)
     }
 
     // MARK: - Loading

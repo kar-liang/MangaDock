@@ -155,6 +155,18 @@ struct ReadingSettingsView: View {
             }
 
             Section {
+                NavigationLink {
+                    TranslationSettingsView()
+                } label: {
+                    Label("翻译", systemImage: "translate")
+                }
+            } header: {
+                Text("翻译")
+            } footer: {
+                Text("把画面里的对话识别出来翻成中文，译文以卡片形式浮在原文位置上，原图不动。识别和翻译都在手机本地跑，图片和文字都不上传。开关在阅读器顶栏的「译」按钮。")
+            }
+
+            Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("当前引擎").font(.subheadline)
                     Text(ImageEnhancer.engineDescription)

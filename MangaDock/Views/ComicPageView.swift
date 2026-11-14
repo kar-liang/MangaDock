@@ -5,6 +5,7 @@ import SwiftUI
 /// 本视图不再承担条漫渲染职责。
 struct ComicPageView: View {
     @ObservedObject var model: ReaderModel
+    @ObservedObject private var translation = TranslationService.shared
     let index: Int
     /// 缩放状态变化（放大 = true），冒泡给 ReaderView 决定是否禁用左右翻页。
     var onZoomChanged: ((Bool) -> Void)? = nil
@@ -12,6 +13,17 @@ struct ComicPageView: View {
     @State private var image: UIImage?
     @State private var failed = false
     @State private var loadedGeneration = 0
+    /// 放大后隐藏译文层：此刻用户是想看原图细节，盖一层卡片纯属碍事。
+    @State private var isZoomed = false
+    @AppStorage(TranslationPrefs.enabledKey) private var translationEnabled = false
+
+    private var pageKey: String {
+        TranslationService.key(chapter: model.currentItem.url, page: index)
+    }
+
+    private var pageState: PageTranslationState {
+        translation.state(for: pageKey)
+    }
 
     var body: some View {
         ZStack {
@@ -19,6 +31,7 @@ struct ComicPageView: View {
             // 2.0.47 统一三种模式白底时一并补上。
             Color.white
             pageContent
+            translatedOverlay
         }
         .contentShape(Rectangle())
         .task(id: "\(index)-\(model.enhanceGeneration)") {
@@ -29,6 +42,9 @@ struct ComicPageView: View {
             loadedGeneration = model.enhanceGeneration
             await load()
         }
+        .task(id: "\(pageKey)-\(translationEnabled)-\(image != nil)") {
+            await translateIfNeeded()
+        }
         .onAppear {
             // Whenever a page becomes visible, start rendering the ones after it
             // in the background.
@@ -37,10 +53,55 @@ struct ComicPageView: View {
         }
     }
 
+    // MARK: - 译文层
+
+    @ViewBuilder
+    private var translatedOverlay: some View {
+        if translationEnabled, !isZoomed, image != nil, pageState.isVisible {
+            GeometryReader { geometry in
+                let fitted = fittedSize(in: geometry.size)
+                TranslationLayer(blocks: pageState.blocks,
+                                 size: fitted,
+                                 zoomScale: 1,
+                                 fontSize: TranslationPrefs.fontSize)
+                    .frame(width: fitted.width, height: fitted.height)
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                    // 绝不能吃手势：翻页是 PagePager 在 UIPageViewController 上装的
+                    // 手势识别器，这里一旦可交互，左右滑动就全废了。
+                    .allowsHitTesting(false)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    /// 图片按 aspectFit 摆在容器中间，译文层必须严格贴着这块区域，
+    /// 否则位置就整体偏移。
+    private func fittedSize(in container: CGSize) -> CGSize {
+        guard let image, image.size.width > 0, image.size.height > 0,
+              container.width > 0, container.height > 0 else { return .zero }
+        let scale = min(container.width / image.size.width,
+                        container.height / image.size.height)
+        return CGSize(width: image.size.width * scale, height: image.size.height * scale)
+    }
+
+    // MARK: - 翻译触发
+
+    private func translateIfNeeded() async {
+        guard translationEnabled, TranslationPrefs.autoTranslate, image != nil else { return }
+        if pageState.phase == .ready { return }
+        guard let data = await model.rawPageData(at: index) else { return }
+        await translation.translate(chapter: model.currentItem.url, page: index, data: data)
+    }
+
+    // MARK: - 页面
+
     @ViewBuilder
     private var pageContent: some View {
         if let image {
-            ZoomableImageView(image: image, onTap: nil, onZoomChanged: onZoomChanged)
+            ZoomableImageView(image: image, onTap: nil, onZoomChanged: { zoomed in
+                withAnimation(.easeInOut(duration: 0.12)) { isZoomed = zoomed }
+                onZoomChanged?(zoomed)
+            })
         } else if failed {
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")

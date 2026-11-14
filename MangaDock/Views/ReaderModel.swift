@@ -496,6 +496,16 @@ final class ReaderModel: ObservableObject {
         await preparePage(position)
     }
 
+    /// 原始页面数据（不降采样、不做增强），给 OCR 用。
+    ///
+    /// 不能用 `image(at:)` 的产物：那条路已经按屏幕分辨率降采样过，
+    /// 小字在那一层就已经糊掉了，再拿去识别等于白跑。走 source 还能吃到
+    /// 现有的磁盘/内存缓存，不会为了翻译重复下载同一页。
+    func rawPageData(at position: Int) async -> Data? {
+        guard let source, position >= 0, position < source.pageCount else { return nil }
+        return try? await source.pageData(at: position)
+    }
+
     /// Decodes already running, keyed by cache key. A visible page used to
     /// start a second decode of the very bytes its pre-render was already
     /// working on — that duplicated work is half of the perceived lag.

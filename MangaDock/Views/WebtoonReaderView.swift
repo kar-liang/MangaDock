@@ -28,6 +28,9 @@ final class LayoutReportingScrollView: UIScrollView {
 /// - 底部 overshoot 触发换章（只在 zoomScale ≈ 1 时，放大看细节不误触发）。
 struct WebtoonReaderView: UIViewRepresentable {
     @ObservedObject var model: ReaderModel
+    /// 翻译状态。挂成 @ObservedObject，翻译结果一到就触发 updateUIView，
+    /// 由 Coordinator 把译文层贴到对应页上。
+    @ObservedObject var translation: TranslationService
     /// 屏宽，用于算每页高度（宽度撑满）。
     let pageWidth: CGFloat
     /// 单击（切换工具栏显隐）。
@@ -90,10 +93,15 @@ struct WebtoonReaderView: UIViewRepresentable {
         // 转圈是手动摆位置的，bounds 有值之后得校正一次 ——
         // makeUIView 里拿到的 bounds 还是零，那一帧的定位（0,0）会把它扔到左上角看不见。
         context.coordinator.refreshIndicator()
+        // 翻译结果是通过 @ObservedObject 触发这次 updateUIView 的，在这里把画布同步上去。
+        context.coordinator.syncTranslationLayers()
     }
 
     // MARK: - Coordinator
 
+    /// UIKit 的回调本来就在主线程，标 `@MainActor` 是为了能直接读写
+    /// `TranslationService` 里 @MainActor 隔离的状态，不用到处 assumeIsolated。
+    @MainActor
     final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var parent: WebtoonReaderView
         weak var scrollView: UIScrollView?
@@ -129,6 +137,11 @@ struct WebtoonReaderView: UIViewRepresentable {
         /// 变成了 `let footer: CGFloat = 300` 的一段空白。用户滑到底只看到黑屏。
         private var endHost: UIHostingController<ChapterEndView>?
         private let endCardHeight: CGFloat = 360
+        /// 每页的译文画布。只给「图已加载且已有译文」的页建，否则一话几十页
+        /// 挂几十个 UILabel，滚动会明显掉帧。
+        private var translationCanvases: [Int: TranslationCanvasView] = [:]
+        /// 已经发起过翻译的页，防止滚动时每帧都打一次 OCR。
+        private var translationRequested: Set<Int> = []
 
         init(parent: WebtoonReaderView) {
             self.parent = parent
@@ -150,6 +163,10 @@ struct WebtoonReaderView: UIViewRepresentable {
             loadingTasks.values.forEach { $0.cancel() }
             loadingTasks.removeAll()
             failedPages.removeAll()
+            // 换章：上一话的译文画布全部丢掉，不然会浮在新页面上。
+            translationCanvases.values.forEach { $0.removeFromSuperview() }
+            translationCanvases.removeAll()
+            translationRequested.removeAll()
 
             // 加载指示器：挂在 scrollView 上（不随内容滚走），位置每次由
             // positionIndicator() 摆到可视区中心。
@@ -290,6 +307,8 @@ struct WebtoonReaderView: UIViewRepresentable {
             parent.model.preloadNextChapterIfNeeded()
 
             refreshIndicator()
+            syncTranslationLayers()
+            requestTranslations(first: first, last: last)
         }
 
         private func loadPage(_ index: Int) {
@@ -324,6 +343,92 @@ struct WebtoonReaderView: UIViewRepresentable {
                     self.relayout()
                 }
                 self.refreshIndicator()
+            }
+        }
+
+        // MARK: - 译文层
+
+        /// 把译文卡片贴到对应的页上。
+        ///
+        /// canvas 的 frame 直接等于那一页的 frame，卡片位置按页尺寸换算 ——
+        /// 因为 canvas 是 contentView 的子视图，整章缩放时它跟着一起缩，
+        /// 位置永远对得上，不用在缩放时重算任何东西。
+        func syncTranslationLayers() {
+            guard let contentView, let scrollView else { return }
+
+            guard TranslationPrefs.isEnabled else {
+                translationCanvases.values.forEach { $0.removeFromSuperview() }
+                translationCanvases.removeAll()
+                return
+            }
+
+            let zoom = max(scrollView.zoomScale, 0.05)
+            let fontSize = TranslationPrefs.fontSize
+            let chapter = parent.model.currentItem.url
+            var wanted: Set<Int> = []
+
+            // 只给「图已经出来了」的页建画布：没图的页还没进可视区，
+            // 提前挂上去纯属浪费。
+            for index in pageViews.indices where pageViews[index].image != nil {
+                let key = TranslationService.key(chapter: chapter, page: index)
+                let state = parent.translation.state(for: key)
+                guard state.isVisible else { continue }
+                wanted.insert(index)
+
+                let canvas: TranslationCanvasView
+                if let existing = translationCanvases[index] {
+                    canvas = existing
+                } else {
+                    canvas = TranslationCanvasView()
+                    contentView.addSubview(canvas)
+                    translationCanvases[index] = canvas
+                }
+
+                let frame = pageViews[index].frame
+                canvas.frame = frame
+                canvas.baseFontSize = fontSize
+                canvas.zoomScale = zoom
+                canvas.placed = state.blocks.compactMap { block in
+                    guard block.isTranslated else { return nil }
+                    return TranslationCanvasView.Placed(rect: block.rect.scaled(to: frame.size),
+                                                        text: block.display,
+                                                        vertical: block.vertical)
+                }
+            }
+
+            for (index, canvas) in translationCanvases where !wanted.contains(index) {
+                canvas.removeFromSuperview()
+            }
+            translationCanvases = translationCanvases.filter { wanted.contains($0.key) }
+        }
+
+        /// 可视区里的页按需翻译。只在「自动翻译」打开时主动发起 ——
+        /// 关掉之后就只在用户点顶栏那个「译」按钮时才翻当前页。
+        func requestTranslations(first: Int, last: Int) {
+            guard TranslationPrefs.isEnabled, TranslationPrefs.autoTranslate else { return }
+            guard pageCount > 0 else { return }
+            let lower = max(0, first)
+            let upper = min(last, pageCount - 1)
+            guard upper >= lower else { return }
+
+            let chapter = parent.model.currentItem.url
+            for index in lower...upper {
+                guard !translationRequested.contains(index) else { continue }
+                let key = TranslationService.key(chapter: chapter, page: index)
+                guard parent.translation.state(for: key).phase == .idle else { continue }
+                translationRequested.insert(index)
+
+                Task { [weak self] in
+                    guard let self else { return }
+                    guard let data = await self.parent.model.rawPageData(at: index) else {
+                        // 拿不到数据就放开重试机会，别让这一页永远翻不了。
+                        self.translationRequested.remove(index)
+                        return
+                    }
+                    await TranslationService.shared.translate(chapter: chapter,
+                                                              page: index,
+                                                              data: data)
+                }
             }
         }
 
