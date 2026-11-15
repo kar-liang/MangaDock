@@ -118,6 +118,12 @@ struct ReaderView: View {
             model.prewarm(from: newValue + 1)
             model.prewarmPrevious(from: newValue)
             model.preloadNextChapterIfNeeded()
+            // 落点页本身也要翻：以前只靠预载顺带翻到，快速翻页时预载
+            // 被取消、或者这页预载失败过，落点页就没人管了。
+            // translate() 内部对正在翻/已翻好的页会直接返回，不会重复跑。
+            if translationEnabled, TranslationPrefs.autoTranslate {
+                Task { await translateCurrentPage() }
+            }
             schedulePrefetch(from: newValue)
         }
         .onDisappear {

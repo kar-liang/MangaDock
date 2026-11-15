@@ -324,8 +324,17 @@ struct WebComicReaderView: View {
                 guard target >= 0, target < total else { return }
 
                 let key = TranslationService.key(chapter: chapterURL, page: target)
-                // 只推进没开始过的页，失败页不重试（省 token）。
-                guard translation.state(for: key).phase == .idle else { continue }
+                // 预载页只推进没开始过的（失败不重试，省 token）；
+                // 当前页（offset 0）例外：失败过也再翻一次 —— 用户正停
+                // 在这页，半翻着不补比多花一次调用更难受。scheduleTranslation
+                // 有 translateAnchor 防抖，每次到达这页最多补一次。
+                let phase = translation.state(for: key).phase
+                let shouldTranslate: Bool = {
+                    if phase == .idle { return true }
+                    if offset == 0, case .failed = phase { return true }
+                    return false
+                }()
+                guard shouldTranslate else { continue }
 
                 let pageURL = pages[target]
                 guard let data = await WebImageLoader.shared.data(for: pageURL,

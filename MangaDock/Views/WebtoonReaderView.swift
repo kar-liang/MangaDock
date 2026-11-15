@@ -140,8 +140,9 @@ struct WebtoonReaderView: UIViewRepresentable {
         /// 每页的译文画布。只给「图已加载且已有译文」的页建，否则一话几十页
         /// 挂几十个 UILabel，滚动会明显掉帧。
         private var translationCanvases: [Int: TranslationCanvasView] = [:]
-        /// 已经发起过翻译的页，防止滚动时每帧都打一次 OCR。
-        private var translationRequested: Set<Int> = []
+        /// 每页已经发起过几次翻译，防止滚动时每帧都打一次 OCR。
+        /// 记次数而不是布尔：失败的当前页允许再试一次（见 requestCurrentPageTranslation）。
+        private var translationAttempts: [Int: Int] = [:]
         /// 预载翻译的串行任务。
         private var prefetchTask: Task<Void, Never>?
         /// 上一轮预载是从哪一页开始的。`loadVisiblePages` 每帧都跑，
@@ -171,7 +172,7 @@ struct WebtoonReaderView: UIViewRepresentable {
             // 换章：上一话的译文画布全部丢掉，不然会浮在新页面上。
             translationCanvases.values.forEach { $0.removeFromSuperview() }
             translationCanvases.removeAll()
-            translationRequested.removeAll()
+            translationAttempts.removeAll()
             prefetchTask?.cancel()
             prefetchTask = nil
             prefetchAnchor = -1
@@ -422,18 +423,32 @@ struct WebtoonReaderView: UIViewRepresentable {
             guard pageCount > 0 else { return }
 
             let index = min(max(parent.model.index, 0), pageCount - 1)
-            guard !translationRequested.contains(index) else { return }
-
             let chapter = parent.model.currentItem.url
             let key = TranslationService.key(chapter: chapter, page: index)
-            guard parent.translation.state(for: key).phase == .idle else { return }
-            translationRequested.insert(index)
+            let phase = parent.translation.state(for: key).phase
+            let attempts = translationAttempts[index] ?? 0
+
+            // 当前页是用户正停着看的页，跟预载页区别对待：
+            // 没开始过的翻一次；失败过的再给一次机会（网络抖动、模型漏条
+            // 都可能是暂时的）。以前失败页直接跳过、又不许重发，这一页
+            // 就永远停在半翻状态，队列径直去翻下一页。
+            // 上限 2 次封顶，滚动每帧调用也不会反复烧 token。
+            switch phase {
+            case .idle:
+                guard attempts == 0 else { return }
+            case .failed(_):
+                // 预载翻失败的页 attempts 还是 0，滚到它照样能补一次。
+                guard attempts < 2 else { return }
+            default:
+                return
+            }
+            translationAttempts[index] = attempts + 1
 
             Task { [weak self] in
                 guard let self else { return }
                 guard let data = await self.parent.model.rawPageData(at: index) else {
-                    // 拿不到数据就放开重试机会，别让这一页永远翻不了。
-                    self.translationRequested.remove(index)
+                    // 拿不到数据不算一次尝试，放开重试机会，别让这一页永远翻不了。
+                    self.translationAttempts[index] = attempts
                     return
                 }
                 await TranslationService.shared.translate(chapter: chapter,
