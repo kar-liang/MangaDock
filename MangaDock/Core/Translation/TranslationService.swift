@@ -41,7 +41,14 @@ final class TranslationService: ObservableObject {
         let blocks: [TextBlock]
         let target: TranslationTarget
         let sourceCode: String?
+        /// 已经补翻过几次。漏条补翻靠它收口，超了就老实报失败，
+        /// 不能无限重试烧 token。
+        var attempt: Int = 0
     }
+
+    /// 一页最多补翻几次（首次不算）。模型偶尔漏掉尾部几条是常态，
+    /// 把漏的单独再发一次，量小、又不容易再漏。
+    private static let maxRetries = 2
 
     private init() {}
 
@@ -100,7 +107,7 @@ final class TranslationService: ObservableObject {
             guard let result else {
                 pages[key] = PageTranslationState(
                     blocks: [],
-                    phase: .failed("识别超时 \(Int(Self.ocrTimeout))s，关掉「小字二次识别」再试")
+                    phase: .failed("识别超时 \(Int(Self.timeout(for: image)))s，关掉「小字二次识别」再试")
                 )
                 return
             }
@@ -270,10 +277,16 @@ final class TranslationService: ObservableObject {
                     if !text.isEmpty { collected[id] = text }
                 }
             } catch {
-                pages[job.key] = PageTranslationState(
-                    blocks: job.blocks,
-                    phase: .failed(Self.describe(error))
-                )
+                // 后面的批次失败时，前面已经翻好的别一起扔掉：
+                // 先回填，剩下的走 apply 的补翻逻辑。
+                if collected.isEmpty {
+                    pages[job.key] = PageTranslationState(
+                        blocks: job.blocks,
+                        phase: .failed(Self.describe(error))
+                    )
+                } else {
+                    apply(collected, to: job)
+                }
                 return
             }
         }
@@ -282,28 +295,53 @@ final class TranslationService: ObservableObject {
     }
 
     /// 回填译文 + 写缓存 + 收尾状态。两个引擎共用。
+    ///
+    /// 漏条不再直接判失败：模型（尤其一页台词多时）经常漏掉尾部几条，
+    /// 而块是按从上到下排的，漏的正好是下半页 —— 以前这里一漏就把整页
+    /// 标成 failed，阅读器又只翻 idle 的页，这一页就永远停在半翻状态、
+    /// 队列径直去翻下一页。现在把没翻出来的块单独凑一个补翻 job 重新入队
+    /// （量小，模型不容易再漏），补 `maxRetries` 次还漏才报失败。
     @MainActor
     private func apply(_ translations: [Int: String], to job: Job) {
-        guard !translations.isEmpty else {
-            pages[job.key] = PageTranslationState(blocks: job.blocks, phase: .failed("没拿到译文"))
-            return
+        if !translations.isEmpty {
+            TranslationCache.storeTranslations(chapter: job.chapter,
+                                               page: job.page,
+                                               target: job.target.rawValue,
+                                               translations: translations)
         }
-
-        TranslationCache.storeTranslations(chapter: job.chapter,
-                                           page: job.page,
-                                           target: job.target.rawValue,
-                                           translations: translations)
 
         // 合并回这一页的完整状态（队列里的 blocks 只有未翻译的，之前已翻的在 pages 里）。
         var state = pages[job.key] ?? PageTranslationState(blocks: job.blocks, phase: .translating)
-        var remaining = false
         for index in state.blocks.indices {
             if let text = translations[state.blocks[index].id] {
                 state.blocks[index].translated = text
             }
-            if !state.blocks[index].isTranslated { remaining = true }
         }
-        state.phase = remaining ? .failed("有一部分没翻出来") : .ready
+        let missing = state.blocks.filter { !$0.isTranslated }
+
+        guard !missing.isEmpty else {
+            state.phase = .ready
+            pages[job.key] = state
+            return
+        }
+
+        if job.attempt < Self.maxRetries {
+            state.phase = .translating
+            pages[job.key] = state
+            diagAsync("translate", "retry missing \(missing.count) blocks page=\(job.page) attempt=\(job.attempt + 1)")
+            enqueue(Job(key: job.key,
+                        chapter: job.chapter,
+                        page: job.page,
+                        blocks: missing,
+                        target: job.target,
+                        sourceCode: job.sourceCode,
+                        attempt: job.attempt + 1))
+            return
+        }
+
+        state.phase = .failed(translations.isEmpty && state.blocks.allSatisfy { !$0.isTranslated }
+                              ? "没拿到译文"
+                              : "有一部分没翻出来")
         pages[job.key] = state
     }
 
@@ -340,12 +378,22 @@ final class TranslationService: ObservableObject {
         }.value
     }
 
-    /// 识别总超时（秒）。
+    /// 识别总超时（秒，普通页）。
     ///
     /// Vision 在超大页面上（超长条漫、扫描件）可能跑几十秒。不设上限的话界面
     /// 会永远停在「识别文字…」，用户根本分不清是在跑还是已经卡死 ——
     /// 这一版就是被这个坑到的。宁可超时报错，让人知道发生了什么。
     private static let ocrTimeout: Double = 30
+
+    /// 这一页的实际超时：长图是分片识别的，片数越多活越多，
+    /// 还按 30 秒一刀切的话，分片修好了下半页、又会整页超时失败。
+    /// 每多一片加 20 秒，总上限 120 秒。
+    private static func timeout(for image: UIImage) -> Double {
+        guard let cgImage = image.cgImage else { return ocrTimeout }
+        let tiles = ComicOCR.tileCount(pixelWidth: cgImage.width, pixelHeight: cgImage.height)
+        guard tiles > 1 else { return ocrTimeout }
+        return min(120, ocrTimeout + 20 * Double(tiles - 1))
+    }
 
     /// 跑 OCR，到点没结果就返回 nil。
     ///
@@ -369,10 +417,11 @@ final class TranslationService: ObservableObject {
                     diagAsync("translate", "ocr finished after timeout, discarded")
                 }
             }
+            let limit = timeout(for: image)
             Task {
-                try? await Task.sleep(nanoseconds: UInt64(ocrTimeout * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
                 if latch.fire() {
-                    diagAsync("translate", "ocr timeout \(Int(ocrTimeout))s")
+                    diagAsync("translate", "ocr timeout \(Int(limit))s")
                     continuation.resume(returning: nil)
                 }
             }

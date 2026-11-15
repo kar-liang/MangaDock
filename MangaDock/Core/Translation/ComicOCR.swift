@@ -39,9 +39,9 @@ enum ComicOCR {
         let started = Date()
         diagAsync("translate", "ocr start \(Int(image.size.width))x\(Int(image.size.height)) refine=\(refine)")
 
-        // 第一遍：整页。
+        // 第一遍：整页（长图自动分片，见 recognizePageLines）。
         let languages = hint.visionLanguages
-        let firstPass = (try? recognizeLines(in: cgImage, languages: languages)) ?? []
+        let firstPass = recognizePageLines(in: cgImage, languages: languages)
         diagAsync("translate", "ocr pass1 \(diagElapsed(started)) lines=\(firstPass.count)")
         guard !firstPass.isEmpty else {
             return Result(blocks: [], dominantLanguage: nil)
@@ -84,6 +84,86 @@ enum ComicOCR {
 
         diagAsync("translate", "ocr done \(diagElapsed(started)) blocks=\(blocks.count) lang=\(dominant ?? "-")")
         return Result(blocks: blocks, dominantLanguage: dominant)
+    }
+
+    // MARK: - 第一遍：长图分片
+
+    /// 单片高度（像素）。Vision 一次识别的图越高，内部缩放压得越狠，
+    /// 小字先糊掉 —— 2000px 一片是「字还清楚」和「片数别太多」的折中。
+    private static let tileHeight: CGFloat = 2000
+    /// 相邻片的重叠（像素）。切口正好压在某行字上时，两片各认到半行，
+    /// 靠重叠 + 去重把完整的那个留下来。
+    private static let tileOverlap: CGFloat = 320
+
+    /// 这张图第一遍要切几片。普通页恒为 1，只有明显是长条图才切。
+    static func tileCount(pixelWidth: Int, pixelHeight: Int) -> Int {
+        guard pixelWidth > 0, pixelHeight > Int(tileHeight) else { return 1 }
+        guard CGFloat(pixelHeight) > CGFloat(pixelWidth) * 1.5 else { return 1 }
+        let step = tileHeight - tileOverlap
+        let extra = CGFloat(pixelHeight) - tileHeight
+        return 1 + Int(ceil(extra / step))
+    }
+
+    /// 第一遍识别。长图分片逐片认，再把坐标换算回整页、去掉重叠区的重复行。
+    ///
+    /// 为什么必须切：条漫/在线长图一页动辄 800×10000 以上，整张图只跑一次
+    /// `VNRecognizeTextRequest` 时，Vision 会把整图大幅缩小后再识别，
+    /// 下半部分的字先小到糊成一片 —— 表现就是「上半页翻出来了、
+    /// 下半页一个字都没认到」，而且是长页必现，不是偶发。
+    /// 普通页（切出来只有 1 片）走原来的整页一遍，不多花时间。
+    private static func recognizePageLines(in cgImage: CGImage,
+                                           languages: [String]) -> [BubbleGrouper.Line] {
+        let width = cgImage.width
+        let height = cgImage.height
+        guard tileCount(pixelWidth: width, pixelHeight: height) > 1 else {
+            return (try? recognizeLines(in: cgImage, languages: languages)) ?? []
+        }
+
+        diagAsync("translate", "ocr tiling \(width)x\(height) tiles=\(tileCount(pixelWidth: width, pixelHeight: height))")
+        var all: [BubbleGrouper.Line] = []
+        let step = Int(tileHeight - tileOverlap)
+        var top = 0
+        while top < height {
+            let tilePixelHeight = min(Int(tileHeight), height - top)
+            let cropRect = CGRect(x: 0, y: top, width: width, height: tilePixelHeight)
+            if let tile = cgImage.cropping(to: cropRect),
+               let lines = try? recognizeLines(in: tile, languages: languages) {
+                for line in lines {
+                    // 片内归一化坐标 → 整页归一化坐标（x/宽不变，只换算 y/高）。
+                    let rect = NormalizedRect(
+                        x: line.rect.x,
+                        y: (CGFloat(top) + line.rect.y * CGFloat(tilePixelHeight)) / CGFloat(height),
+                        width: line.rect.width,
+                        height: line.rect.height * CGFloat(tilePixelHeight) / CGFloat(height))
+                    all.append(BubbleGrouper.Line(text: line.text,
+                                                  rect: rect,
+                                                  confidence: line.confidence))
+                }
+            }
+            if top + tilePixelHeight >= height { break }
+            top += step
+        }
+        return deduplicate(all)
+    }
+
+    /// 重叠区里的同一行会被相邻两片各认一次：文字相同且位置重合的，
+    /// 只留置信度高的那条。位置不重合的同文行（比如两处一样的拟声词）不误删。
+    private static func deduplicate(_ lines: [BubbleGrouper.Line]) -> [BubbleGrouper.Line] {
+        var kept: [BubbleGrouper.Line] = []
+        for line in lines {
+            if let dup = kept.firstIndex(where: { isSameLine($0, line) }) {
+                if line.confidence > kept[dup].confidence { kept[dup] = line }
+            } else {
+                kept.append(line)
+            }
+        }
+        return kept
+    }
+
+    private static func isSameLine(_ a: BubbleGrouper.Line, _ b: BubbleGrouper.Line) -> Bool {
+        guard a.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                == b.text.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return a.rect.inflated(by: 0.01).intersects(b.rect)
     }
 
     // MARK: - 第二遍

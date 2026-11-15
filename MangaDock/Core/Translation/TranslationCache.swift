@@ -77,7 +77,10 @@ enum TranslationCache {
     // MARK: - 文件
 
     private static func ocrURL(chapter: String) -> URL {
-        directory.appendingPathComponent("ocr-" + CacheManager.hash(chapter) + ".json")
+        // 前缀带版本号：3.4 起 OCR 改成分片识别，旧缓存里可能存着
+        // 「只有上半页」的残缺结果，继续命中它这页就永远翻不全。
+        // 换前缀让旧文件自然作废（清除缓存时整个目录照样删掉）。
+        directory.appendingPathComponent("ocr2-" + CacheManager.hash(chapter) + ".json")
     }
 
     private static func textURL(chapter: String, target: String) -> URL {
