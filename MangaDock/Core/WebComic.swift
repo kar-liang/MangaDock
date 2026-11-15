@@ -188,13 +188,16 @@ enum WebComicParser {
         guard !chapters.isEmpty else {
             throw ParseError.noImages  // reuse: nothing useful found
         }
-        let cover = imageURLs(in: html, base: url).first
+        let cover = imageURLs(in: html, base: url, allowEncodedLists: false).first
         return IndexResult(title: title, chapters: chapters, cover: cover)
     }
 
     /// Chapter-name hints. Text like "第12话", "Episode 3", "ch. 7", "第 07 卷".
+    ///
+    /// URL 里也常见 `chapter-77` / `chapter_12` 这种连字符写法，
+    /// 所以分隔符用 `[\s_-]*` 而不是 `\s*` —— 卡死空白的话，正文页 URL 就认不出来。
     private static let chapterTextPattern =
-        "第\\s*\\d+\\s*[话話章节卷回]|episode\\s*\\d+|chapter\\s*\\d+|ch\\.\\s*\\d+|ep\\.\\s*\\d+"
+        "第\\s*\\d+\\s*[话話章节卷回]|episode[\\s_-]*\\d+|chapter[\\s_-]*\\d+|ch\\.\\s*\\d+|ep\\.\\s*\\d+"
 
     private static func chapterLinks(in html: String, base: URL) -> [WebComicChapter] {
         guard let linkRegex = try? NSRegularExpression(
@@ -260,7 +263,17 @@ enum WebComicParser {
 
     /// Collects candidate image URLs in document order, skipping obvious chrome
     /// (logos, icons, tracking pixels, base64 placeholders).
-    static func imageURLs(in html: String, base: URL) -> [URL] {
+    ///
+    /// - Parameter allowEncodedLists: 是否允许走「base64 图片数组」那条路。
+    ///   目录页要关掉：系列页上常挂着推荐位的小图数组，取来当封面会张冠李戴。
+    static func imageURLs(in html: String, base: URL, allowEncodedLists: Bool = true) -> [URL] {
+        // 第一步：有些站把正片图片 base64 编码塞在 JS 数组里，页面上一个 <img>
+        // 都没有（图是 JS 解码后插进 DOM 的）。这种站光扫 img 永远是 0 张。
+        if allowEncodedLists {
+            let encoded = base64URLArray(in: html)
+            if !encoded.isEmpty { return encoded }
+        }
+
         guard let tagRegex = try? NSRegularExpression(pattern: "<img\\b[^>]*>",
                                                       options: [.caseInsensitive]) else { return [] }
 
@@ -342,5 +355,67 @@ enum WebComicParser {
               let match = regex.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)),
               let range = Range(match.range(at: 1), in: tag) else { return nil }
         return Int(tag[range])
+    }
+
+    // MARK: - base64 图片数组
+
+    /// 解析 `["aHR0cHM6...", ...]` 这种把图片地址 base64 编码的数组。
+    ///
+    /// manga18.club 这类站的做法：章节页正文里**一个 `<img>` 都没有**，
+    /// 图片地址全部编码后塞进
+    /// `var slides_p_path = ["aHR0cHM6Ly9jZG4u...", ...]`，
+    /// 再由 JS 用 `atob()` 解出来插进 DOM。所以只扫 `<img>` 永远解析出 0 张 ——
+    /// 表现就是「章节能列出来，但正文一张图都读不到」。
+    ///
+    /// 不按变量名匹配（今天叫 `slides_p_path`，明天可能叫别的），而是找
+    /// 「整个数组都是长 base64 字符串」的形状，再用「解码结果必须是 http URL」
+    /// 兜底。换个变量名也照样认。
+    private static func base64URLArray(in html: String) -> [URL] {
+        guard let arrayRegex = try? NSRegularExpression(
+            pattern: "\\[\\s*((?:\"[A-Za-z0-9+/=]{20,}\"\\s*,?\\s*)+)\\]",
+            options: []) else { return [] }
+        guard let stringRegex = try? NSRegularExpression(
+            pattern: "\"([A-Za-z0-9+/=]{20,})\"") else { return [] }
+
+        let ns = html as NSString
+        var best: [URL] = []
+
+        for match in arrayRegex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let body = ns.substring(with: match.range(at: 1))
+            let bodyNS = body as NSString
+            var urls: [URL] = []
+
+            for item in stringRegex.matches(in: body,
+                                            range: NSRange(location: 0, length: bodyNS.length)) {
+                let raw = bodyNS.substring(with: item.range(at: 1))
+                guard let decoded = decodeBase64String(raw),
+                      decoded.hasPrefix("http://") || decoded.hasPrefix("https://"),
+                      let url = URL(string: decoded) else { continue }
+
+                let lower = url.absoluteString.lowercased()
+                if lower.hasSuffix(".svg") || lower.hasSuffix(".gif") { continue }
+                if ["logo", "avatar", "icon", "qr", "banner", "advert"].contains(where: { lower.contains($0) }) {
+                    continue
+                }
+                urls.append(url)
+            }
+
+            // 少于 3 张不算「正片列表」—— 免得把头像、图标之类的 base64
+            // 小数组当成整话图片。多个候选时取最长的那个。
+            if urls.count >= 3, urls.count > best.count {
+                best = urls
+            }
+        }
+        return best
+    }
+
+    private static func decodeBase64String(_ raw: String) -> String? {
+        var text = raw
+        // 有的站会省掉尾部 `=`，`Data(base64Encoded:)` 对不齐 4 的直接返回 nil。
+        while text.count % 4 != 0 { text += "=" }
+        guard let data = Data(base64Encoded: text, options: .ignoreUnknownCharacters) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 }
