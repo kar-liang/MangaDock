@@ -15,6 +15,8 @@ struct TranslationSettingsView: View {
     @AppStorage(TranslationPrefs.autoKey) private var autoTranslate = true
     @AppStorage(TranslationPrefs.refineKey) private var refineSmallText = true
     @AppStorage(TranslationPrefs.fontSizeKey) private var fontSize = 14.0
+    @AppStorage(TranslationPrefs.prefetchKey) private var prefetchEnabled = true
+    @AppStorage(TranslationPrefs.prefetchCountKey) private var prefetchCount = 2
 
     @AppStorage(TranslationPrefs.engineKey) private var engineRaw = TranslationEngine.auto.rawValue
     @AppStorage(TranslationPrefs.baseURLKey) private var baseURL = ""
@@ -148,6 +150,17 @@ struct TranslationSettingsView: View {
                 Text("识别")
             } footer: {
                 Text("「小字二次识别」会把每个气泡裁出来放大再认一遍。小字识别率明显更高，代价是每页多花一到两秒。关掉会快一倍。")
+            }
+
+            Section {
+                Toggle("预载翻译", isOn: $prefetchEnabled)
+                if prefetchEnabled {
+                    Stepper("提前翻 \(prefetchCount) 页", value: $prefetchCount, in: 1...5)
+                }
+            } header: {
+                Text("预载")
+            } footer: {
+                Text("当前页翻完后，后台接着把后面几页也翻好，翻到那页直接出译文，不用等。一页一页串行推进，不会把机器压死。\n\n⚠️ 预载会提前取后面几页的图片数据（要联网下载），也会把那些台词发给大模型。移动网络下留意流量和调用次数。关掉就只翻当前页。")
             }
 
             Section {

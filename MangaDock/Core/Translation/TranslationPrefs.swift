@@ -101,6 +101,8 @@ enum TranslationPrefs {
     static let engineKey = "mangadock.translate.engine"
     static let baseURLKey = "mangadock.translate.baseURL"
     static let modelKey = "mangadock.translate.model"
+    static let prefetchKey = "mangadock.translate.prefetch"
+    static let prefetchCountKey = "mangadock.translate.prefetchCount"
 
     /// Keychain 里的账号名。Key 本身不写进 UserDefaults、不写进任何日志。
     private static let apiKeyAccount = "translate.apiKey"
@@ -137,6 +139,24 @@ enum TranslationPrefs {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: refineKey) == nil { return true }
         return defaults.bool(forKey: refineKey)
+    }
+
+    // MARK: - 预载
+
+    /// 预载翻译：当前页翻完，后台接着把后面几页也翻好。
+    static var prefetchEnabled: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: prefetchKey) == nil { return true }
+        return defaults.bool(forKey: prefetchKey)
+    }
+
+    /// 预载几页。0 = 只翻当前页。上限 5 —— 再多等于整章预翻，
+    /// token 和流量都吃不消，翻页反而不需要那么远的提前量。
+    static var prefetchCount: Int {
+        guard prefetchEnabled else { return 0 }
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: prefetchCountKey) == nil { return 2 }
+        return max(0, min(defaults.integer(forKey: prefetchCountKey), 5))
     }
 
     // MARK: - 引擎

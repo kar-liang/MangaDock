@@ -142,6 +142,11 @@ struct WebtoonReaderView: UIViewRepresentable {
         private var translationCanvases: [Int: TranslationCanvasView] = [:]
         /// 已经发起过翻译的页，防止滚动时每帧都打一次 OCR。
         private var translationRequested: Set<Int> = []
+        /// 预载翻译的串行任务。
+        private var prefetchTask: Task<Void, Never>?
+        /// 上一轮预载是从哪一页开始的。`loadVisiblePages` 每帧都跑，
+        /// 不比对锚点的话会每帧取消重排 —— 预载永远停在第一页。
+        private var prefetchAnchor: Int = -1
 
         init(parent: WebtoonReaderView) {
             self.parent = parent
@@ -167,6 +172,9 @@ struct WebtoonReaderView: UIViewRepresentable {
             translationCanvases.values.forEach { $0.removeFromSuperview() }
             translationCanvases.removeAll()
             translationRequested.removeAll()
+            prefetchTask?.cancel()
+            prefetchTask = nil
+            prefetchAnchor = -1
 
             // 加载指示器：挂在 scrollView 上（不随内容滚走），位置每次由
             // positionIndicator() 摆到可视区中心。
@@ -309,6 +317,7 @@ struct WebtoonReaderView: UIViewRepresentable {
             refreshIndicator()
             syncTranslationLayers()
             requestCurrentPageTranslation()
+            schedulePrefetch(from: parent.model.index)
         }
 
         private func loadPage(_ index: Int) {
@@ -430,6 +439,44 @@ struct WebtoonReaderView: UIViewRepresentable {
                 await TranslationService.shared.translate(chapter: chapter,
                                                           page: index,
                                                           data: data)
+            }
+        }
+
+        /// 预载后面几页，跟分页模式一个策略：串行推进，位置变了才重排。
+        ///
+        /// 用 `prefetchAnchor` 挡住重复调度 —— `loadVisiblePages` 在
+        /// `scrollViewDidScroll` 里每帧都跑，不比对的话每次都 cancel 重建，
+        /// 预载会在第一页反复重启，等于没做。
+        private func schedulePrefetch(from page: Int) {
+            guard page != prefetchAnchor else { return }
+            prefetchAnchor = page
+
+            prefetchTask?.cancel()
+            prefetchTask = nil
+
+            let count = TranslationPrefs.prefetchCount
+            guard TranslationPrefs.isEnabled, count > 0 else { return }
+            let total = pageCount
+            guard total > 0 else { return }
+            let chapter = parent.model.currentItem.url
+
+            prefetchTask = Task { [weak self] in
+                for offset in 1...count {
+                    if Task.isCancelled { return }
+                    guard let self else { return }
+                    let target = page + offset
+                    guard target >= 0, target < total else { return }
+
+                    let key = TranslationService.key(chapter: chapter, page: target)
+                    // 只推进没开始过的页，失败页不重试（省 token）。
+                    guard TranslationService.shared.state(for: key).phase == .idle else { continue }
+
+                    guard let data = await self.parent.model.rawPageData(at: target) else { continue }
+                    if Task.isCancelled { return }
+                    await TranslationService.shared.translate(chapter: chapter,
+                                                              page: target,
+                                                              data: data)
+                }
             }
         }
 

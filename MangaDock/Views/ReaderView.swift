@@ -24,6 +24,8 @@ struct ReaderView: View {
     @State private var isPageZoomed = false
     @AppStorage("mangadock.readerMode") private var defaultReaderMode = ReaderMode.paged.rawValue
     @AppStorage(TranslationPrefs.enabledKey) private var translationEnabled = false
+    /// 预载翻译的串行任务。翻页时取消重排，一次只推进一页。
+    @State private var prefetchTask: Task<Void, Never>?
 
     init(item: WebDAVItem) {
         _model = StateObject(wrappedValue: ReaderModel(item: item))
@@ -116,8 +118,11 @@ struct ReaderView: View {
             model.prewarm(from: newValue + 1)
             model.prewarmPrevious(from: newValue)
             model.preloadNextChapterIfNeeded()
+            schedulePrefetch(from: newValue)
         }
         .onDisappear {
+            prefetchTask?.cancel()
+            prefetchTask = nil
             guard model.pageCount > 0 else { return }
             saveProgress(page: min(model.index, model.pageCount - 1))
         }
@@ -576,8 +581,45 @@ struct ReaderView: View {
 
     private func toggleTranslation() {
         translationEnabled.toggle()
-        guard translationEnabled else { return }
+        guard translationEnabled else {
+            prefetchTask?.cancel()
+            prefetchTask = nil
+            return
+        }
         Task { await translateCurrentPage() }
+        schedulePrefetch(from: model.index)
+    }
+
+    /// 预载：当前页翻完，后台串行把后面几页也翻好，翻到那页直接出译文。
+    ///
+    /// 串行是有意的 —— 几页同时跑 OCR 就是 2.9 之前那个「一直识别中」。
+    /// 翻页时取消上一轮，从新位置重排。
+    private func schedulePrefetch(from page: Int) {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+
+        let count = TranslationPrefs.prefetchCount
+        guard translationEnabled, count > 0 else { return }
+        let total = model.pageCount
+        guard total > 0 else { return }
+        let chapter = model.currentItem.url
+
+        prefetchTask = Task {
+            for offset in 1...count {
+                if Task.isCancelled { return }
+                let target = page + offset
+                guard target >= 0, target < total else { return }
+
+                let key = TranslationService.key(chapter: chapter, page: target)
+                // 只推进「还没开始过」的页：翻好的跳过、正在翻的跳过、
+                // 失败过的也跳过 —— 预载不该拿失败页反复重试烧 token。
+                guard translation.state(for: key).phase == .idle else { continue }
+
+                guard let data = await model.rawPageData(at: target) else { continue }
+                if Task.isCancelled { return }
+                await translation.translate(chapter: chapter, page: target, data: data)
+            }
+        }
     }
 
     private func translateCurrentPage(force: Bool = false) async {
