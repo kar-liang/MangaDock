@@ -308,7 +308,7 @@ struct WebtoonReaderView: UIViewRepresentable {
 
             refreshIndicator()
             syncTranslationLayers()
-            requestTranslations(first: first, last: last)
+            requestCurrentPageTranslation()
         }
 
         private func loadPage(_ index: Int) {
@@ -402,33 +402,34 @@ struct WebtoonReaderView: UIViewRepresentable {
             translationCanvases = translationCanvases.filter { wanted.contains($0.key) }
         }
 
-        /// 可视区里的页按需翻译。只在「自动翻译」打开时主动发起 ——
-        /// 关掉之后就只在用户点顶栏那个「译」按钮时才翻当前页。
-        func requestTranslations(first: Int, last: Int) {
+        /// 只翻译**当前这一页**。
+        ///
+        /// 之前是「可视区里所有页一起翻」—— 条漫一屏压着 3、4 页，一次触发就是
+        /// 3、4 个 Vision 请求并发，把设备压到过载。用户看到的现象是状态栏
+        /// 一直停在「识别文字…」，因为每一页都在排队等 GPU。
+        /// 现在改成只翻当前页，滚动到下一页再翻下一页，串行推进。
+        func requestCurrentPageTranslation() {
             guard TranslationPrefs.isEnabled, TranslationPrefs.autoTranslate else { return }
             guard pageCount > 0 else { return }
-            let lower = max(0, first)
-            let upper = min(last, pageCount - 1)
-            guard upper >= lower else { return }
+
+            let index = min(max(parent.model.index, 0), pageCount - 1)
+            guard !translationRequested.contains(index) else { return }
 
             let chapter = parent.model.currentItem.url
-            for index in lower...upper {
-                guard !translationRequested.contains(index) else { continue }
-                let key = TranslationService.key(chapter: chapter, page: index)
-                guard parent.translation.state(for: key).phase == .idle else { continue }
-                translationRequested.insert(index)
+            let key = TranslationService.key(chapter: chapter, page: index)
+            guard parent.translation.state(for: key).phase == .idle else { return }
+            translationRequested.insert(index)
 
-                Task { [weak self] in
-                    guard let self else { return }
-                    guard let data = await self.parent.model.rawPageData(at: index) else {
-                        // 拿不到数据就放开重试机会，别让这一页永远翻不了。
-                        self.translationRequested.remove(index)
-                        return
-                    }
-                    await TranslationService.shared.translate(chapter: chapter,
-                                                              page: index,
-                                                              data: data)
+            Task { [weak self] in
+                guard let self else { return }
+                guard let data = await self.parent.model.rawPageData(at: index) else {
+                    // 拿不到数据就放开重试机会，别让这一页永远翻不了。
+                    self.translationRequested.remove(index)
+                    return
                 }
+                await TranslationService.shared.translate(chapter: chapter,
+                                                          page: index,
+                                                          data: data)
             }
         }
 

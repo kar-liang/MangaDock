@@ -36,9 +36,13 @@ enum ComicOCR {
             return Result(blocks: [], dominantLanguage: nil)
         }
 
+        let started = Date()
+        diagAsync("translate", "ocr start \(Int(image.size.width))x\(Int(image.size.height)) refine=\(refine)")
+
         // 第一遍：整页。
         let languages = hint.visionLanguages
         let firstPass = (try? recognizeLines(in: cgImage, languages: languages)) ?? []
+        diagAsync("translate", "ocr pass1 \(diagElapsed(started)) lines=\(firstPass.count)")
         guard !firstPass.isEmpty else {
             return Result(blocks: [], dominantLanguage: nil)
         }
@@ -53,7 +57,7 @@ enum ComicOCR {
         let dominant = dominantLanguage(of: joined, hint: hint)
 
         // 第二遍：逐气泡裁剪放大重识别。
-        if refine {
+        if refine, !Task.isCancelled {
             let forced = hint.forcedLanguage ?? visionLanguage(for: dominant)
             if let forced,
                let refined = await refineGroups(groups,
@@ -62,6 +66,7 @@ enum ComicOCR {
                                                 language: forced) {
                 groups = refined
             }
+            diagAsync("translate", "ocr pass2 \(diagElapsed(started)) groups=\(groups.count)")
         }
 
         var blocks: [TextBlock] = []
@@ -77,13 +82,17 @@ enum ComicOCR {
                                     language: dominant))
         }
 
+        diagAsync("translate", "ocr done \(diagElapsed(started)) blocks=\(blocks.count) lang=\(dominant ?? "-")")
         return Result(blocks: blocks, dominantLanguage: dominant)
     }
 
     // MARK: - 第二遍
 
-    /// 每个气泡裁出来放大重识别。并发 3 路 —— Vision 吃满 GPU 会互相拖慢，
-    /// 3 路在 A17 上差不多是吞吐最高的点。
+    /// 每个气泡裁出来放大重识别。
+    ///
+    /// 并发从 3 降到 2：3 路时 Vision 的 handler 互相抢 GPU，实测吞吐反而没上去，
+    /// 而且和条漫那种「一屏好几页一起翻」叠在一起时会把设备压死 ——
+    /// 表现就是状态栏一直停在「识别文字…」。2 路稳得多。
     private static func refineGroups(_ groups: [BubbleGrouper.Group],
                                      in cgImage: CGImage,
                                      imageSize: CGSize,
@@ -97,7 +106,7 @@ enum ComicOCR {
 
         await withTaskGroup(of: (Int, String?).self) { group in
             var pending = Array(groups.indices)
-            let concurrency = 3
+            let concurrency = 2
 
             func addNext(_ taskGroup: inout TaskGroup<(Int, String?)>) -> Bool {
                 guard let index = pending.first else { return false }
@@ -116,6 +125,8 @@ enum ComicOCR {
             for _ in 0..<concurrency { if !addNext(&group) { break } }
 
             for await (index, text) in group {
+                // 外部超时后会 cancel 这个任务组，别再往下派新气泡了。
+                if Task.isCancelled { break }
                 if let text, !text.isEmpty {
                     let before = groups[index].text.count
                     // 新结果明显更短说明裁剪时切掉了内容（气泡压线、跨框），

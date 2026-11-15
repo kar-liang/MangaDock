@@ -96,9 +96,14 @@ final class TranslationService: ObservableObject {
             }
             let hint = TranslationPrefs.sourceHint
             let refine = TranslationPrefs.refineSmallText
-            let result = await Task.detached(priority: .userInitiated) {
-                await ComicOCR.recognize(image: image, hint: hint, refine: refine)
-            }.value
+            let result = await Self.recognizeWithTimeout(image: image, hint: hint, refine: refine)
+            guard let result else {
+                pages[key] = PageTranslationState(
+                    blocks: [],
+                    phase: .failed("识别超时 \(Int(Self.ocrTimeout))s，关掉「小字二次识别」再试")
+                )
+                return
+            }
 
             blocks = result.blocks
             guard !blocks.isEmpty else {
@@ -335,6 +340,45 @@ final class TranslationService: ObservableObject {
         }.value
     }
 
+    /// 识别总超时（秒）。
+    ///
+    /// Vision 在超大页面上（超长条漫、扫描件）可能跑几十秒。不设上限的话界面
+    /// 会永远停在「识别文字…」，用户根本分不清是在跑还是已经卡死 ——
+    /// 这一版就是被这个坑到的。宁可超时报错，让人知道发生了什么。
+    private static let ocrTimeout: Double = 30
+
+    /// 跑 OCR，到点没结果就返回 nil。
+    ///
+    /// 为什么不用 `withTaskGroup` 竞速：group 会**等所有子任务结束**才返回，
+    /// 而 Vision 的 `perform` 是同步的、不响应取消 —— 超时那条路会一直卡在
+    /// 等 OCR 跑完，等于没超时。所以这里让 OCR 跑在 group 之外，用一次性
+    /// 闩保证「完成」和「超时」只有一方能唤醒 continuation。
+    ///
+    /// 代价：超时之后那次 OCR 仍在后台跑完（不写缓存、不更新状态），
+    /// 只是没人在等它。这是能接受的 —— 总比界面永远转圈强。
+    private static func recognizeWithTimeout(image: UIImage,
+                                             hint: TranslationSourceHint,
+                                             refine: Bool) async -> ComicOCR.Result? {
+        let latch = OnceLatch()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<ComicOCR.Result?, Never>) in
+            Task.detached(priority: .userInitiated) {
+                let result = await ComicOCR.recognize(image: image, hint: hint, refine: refine)
+                if latch.fire() {
+                    continuation.resume(returning: result)
+                } else {
+                    diagAsync("translate", "ocr finished after timeout, discarded")
+                }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(ocrTimeout * 1_000_000_000))
+                if latch.fire() {
+                    diagAsync("translate", "ocr timeout \(Int(ocrTimeout))s")
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
     private static func languageName(_ code: String) -> String {
         switch code.lowercased() {
         case "ja", "ja-jp": return "日文"
@@ -362,5 +406,20 @@ final class TranslationService: ObservableObject {
             return llm.errorDescription ?? "大模型翻译失败"
         }
         return "大模型翻译失败：\(error.localizedDescription)"
+    }
+}
+
+/// 谁先到算谁的小闩。OCR 的「完成」和「超时」是两条并行路径，
+/// 只有第一个能唤醒 continuation，第二个直接作废。
+private final class OnceLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+
+    func fire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
     }
 }
