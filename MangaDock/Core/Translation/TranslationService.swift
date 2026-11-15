@@ -175,23 +175,59 @@ final class TranslationService: ObservableObject {
     private func enqueue(_ job: Job) {
         queue.removeAll { $0.key == job.key }
         queue.append(job)
-        ensureConfiguration(source: job.sourceCode, target: job.target)
-    }
 
-    @MainActor
-    private func pump() async {
-        guard !pumping, let session else { return }
-        pumping = true
-        defer { pumping = false }
-
-        while !queue.isEmpty {
-            let job = queue.removeFirst()
-            await perform(job, session: session)
+        if TranslationPrefs.usesLLM {
+            // 大模型走 HTTP，不需要 TranslationSession，自己把队列推起来。
+            Task { @MainActor [weak self] in
+                await self?.pump()
+            }
+        } else {
+            // 端上引擎要靠 configuration 变化去触发 .translationTask，
+            // session 交进来之后由 run() 的轮询循环接手。
+            ensureConfiguration(source: job.sourceCode, target: job.target)
         }
     }
 
     @MainActor
-    private func perform(_ job: Job, session: TranslationSession) async {
+    private func pump() async {
+        guard !pumping else { return }
+        pumping = true
+        defer { pumping = false }
+
+        while !queue.isEmpty {
+            let job = queue[0]
+            if TranslationPrefs.usesLLM {
+                queue.removeFirst()
+                await performLLM(job)
+            } else {
+                // 端上引擎：session 还没被 .translationTask 交进来就先等着，
+                // 别把这一页判成失败。
+                guard let session else { return }
+                queue.removeFirst()
+                await performOnDevice(job, session: session)
+            }
+        }
+    }
+
+    /// 大模型路径。一页一次请求，把整页台词一起送过去 ——
+    /// 有上下文，人称和语气比逐条翻连贯得多。
+    @MainActor
+    private func performLLM(_ job: Job) async {
+        do {
+            let map = try await LLMTranslator.translate(blocks: job.blocks,
+                                                        config: TranslationPrefs.llmConfig,
+                                                        target: job.target)
+            apply(map, to: job)
+        } catch {
+            pages[job.key] = PageTranslationState(
+                blocks: job.blocks,
+                phase: .failed(Self.describeLLM(error))
+            )
+        }
+    }
+
+    @MainActor
+    private func performOnDevice(_ job: Job, session: TranslationSession) async {
         // 语言对不支持的话，translate 会一直抛错，先问一句省得白跑。
         let targetLanguage = job.target.language
         if let sourceCode = job.sourceCode {
@@ -237,7 +273,13 @@ final class TranslationService: ObservableObject {
             }
         }
 
-        guard !collected.isEmpty else {
+        apply(collected, to: job)
+    }
+
+    /// 回填译文 + 写缓存 + 收尾状态。两个引擎共用。
+    @MainActor
+    private func apply(_ translations: [Int: String], to job: Job) {
+        guard !translations.isEmpty else {
             pages[job.key] = PageTranslationState(blocks: job.blocks, phase: .failed("没拿到译文"))
             return
         }
@@ -245,13 +287,13 @@ final class TranslationService: ObservableObject {
         TranslationCache.storeTranslations(chapter: job.chapter,
                                            page: job.page,
                                            target: job.target.rawValue,
-                                           translations: collected)
+                                           translations: translations)
 
         // 合并回这一页的完整状态（队列里的 blocks 只有未翻译的，之前已翻的在 pages 里）。
         var state = pages[job.key] ?? PageTranslationState(blocks: job.blocks, phase: .translating)
         var remaining = false
         for index in state.blocks.indices {
-            if let text = collected[state.blocks[index].id] {
+            if let text = translations[state.blocks[index].id] {
                 state.blocks[index].translated = text
             }
             if !state.blocks[index].isTranslated { remaining = true }
@@ -312,5 +354,13 @@ final class TranslationService: ObservableObject {
             return "语言包还没下载，去系统「翻译」里装一下"
         }
         return "翻译失败：\(error.localizedDescription)"
+    }
+
+    /// 大模型这条路的错误自带人话（`LLMTranslateError.errorDescription`），直接用。
+    private static func describeLLM(_ error: Error) -> String {
+        if let llm = error as? LLMTranslateError {
+            return llm.errorDescription ?? "大模型翻译失败"
+        }
+        return "大模型翻译失败：\(error.localizedDescription)"
     }
 }

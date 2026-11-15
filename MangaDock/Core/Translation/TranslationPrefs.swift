@@ -63,7 +63,34 @@ enum TranslationSourceHint: String, CaseIterable, Identifiable {
     }
 }
 
+/// 翻译引擎。
+///
+/// `auto` 是默认：配了 API 就用大模型，没配就退回端上 —— 这样即使用户
+/// 临时清空了 Key，也不会变成"点翻译没反应"。
+enum TranslationEngine: String, CaseIterable, Identifiable {
+    case auto, llm, onDevice
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .auto: return "自动（有 Key 用大模型）"
+        case .llm: return "大模型"
+        case .onDevice: return "系统端上翻译"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .auto: return "配好接口就走大模型，没配就走系统端上模型"
+        case .llm: return "质量最好，但台词文字会发到你填的那个接口"
+        case .onDevice: return "完全离线，不出设备；质量一般，长句会翻得生硬"
+        }
+    }
+}
+
 /// 翻译相关的偏好，全部走 UserDefaults，和项目里其它设置一个路子。
+/// 例外是 API Key —— 那个进 Keychain，不落 UserDefaults。
 enum TranslationPrefs {
     static let enabledKey = "mangadock.translate.enabled"
     static let autoKey = "mangadock.translate.auto"
@@ -71,6 +98,12 @@ enum TranslationPrefs {
     static let sourceKey = "mangadock.translate.source"
     static let fontSizeKey = "mangadock.translate.fontSize"
     static let refineKey = "mangadock.translate.refine"
+    static let engineKey = "mangadock.translate.engine"
+    static let baseURLKey = "mangadock.translate.baseURL"
+    static let modelKey = "mangadock.translate.model"
+
+    /// Keychain 里的账号名。Key 本身不写进 UserDefaults、不写进任何日志。
+    private static let apiKeyAccount = "translate.apiKey"
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
@@ -104,5 +137,42 @@ enum TranslationPrefs {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: refineKey) == nil { return true }
         return defaults.bool(forKey: refineKey)
+    }
+
+    // MARK: - 引擎
+
+    static var engine: TranslationEngine {
+        let raw = UserDefaults.standard.string(forKey: engineKey) ?? ""
+        return TranslationEngine(rawValue: raw) ?? .auto
+    }
+
+    static var llmBaseURL: String {
+        UserDefaults.standard.string(forKey: baseURLKey) ?? ""
+    }
+
+    static var llmModel: String {
+        UserDefaults.standard.string(forKey: modelKey) ?? ""
+    }
+
+    static var llmAPIKey: String {
+        Keychain.load(account: apiKeyAccount) ?? ""
+    }
+
+    static func saveAPIKey(_ value: String) {
+        Keychain.save(value.trimmingCharacters(in: .whitespacesAndNewlines),
+                      account: apiKeyAccount)
+    }
+
+    static var llmConfig: LLMConfig {
+        LLMConfig(baseURL: llmBaseURL, apiKey: llmAPIKey, model: llmModel)
+    }
+
+    /// 这一页到底该用哪个引擎。
+    static var usesLLM: Bool {
+        switch engine {
+        case .llm: return true
+        case .onDevice: return false
+        case .auto: return llmConfig.isConfigured
+        }
     }
 }

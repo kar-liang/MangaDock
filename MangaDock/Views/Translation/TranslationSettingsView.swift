@@ -3,9 +3,12 @@ import Translation
 
 /// 翻译设置。
 ///
-/// 全部走 Apple 端上能力：Vision 识别 + Translation 端上翻译。
-/// 没有 API key、没有第二台服务器、图片和文字都不出手机 ——
-/// 这条线跟 MangaDock「只连你自己的服务器」是一回事。
+/// 两条腿：
+/// - **大模型**（OpenAI 兼容接口）：质量最好，但要填地址/Key/模型名，
+///   而且**台词的文字会发到那个接口**（图片永远不会）。
+/// - **系统端上翻译**：iOS 18 自带的 Translation 框架，完全离线，质量一般。
+///
+/// 默认 `auto`：配了接口走大模型，没配退回端上。
 struct TranslationSettingsView: View {
     @AppStorage(TranslationPrefs.targetKey) private var targetRaw = TranslationTarget.simplifiedChinese.rawValue
     @AppStorage(TranslationPrefs.sourceKey) private var sourceRaw = TranslationSourceHint.auto.rawValue
@@ -13,12 +16,114 @@ struct TranslationSettingsView: View {
     @AppStorage(TranslationPrefs.refineKey) private var refineSmallText = true
     @AppStorage(TranslationPrefs.fontSizeKey) private var fontSize = 14.0
 
+    @AppStorage(TranslationPrefs.engineKey) private var engineRaw = TranslationEngine.auto.rawValue
+    @AppStorage(TranslationPrefs.baseURLKey) private var baseURL = ""
+    @AppStorage(TranslationPrefs.modelKey) private var model = ""
+
+    /// API Key 只在 Keychain 里，所以不能用 @AppStorage，走 @State 中转。
+    @State private var apiKey = ""
+    @State private var revealKey = false
+    @State private var testing = false
+    @State private var testOK: Bool?
+    @State private var testMessage: String?
+
     @State private var cacheSize = TranslationCache.formattedSize()
     @State private var confirmClear = false
-    @State private var installedPairs: [String] = []
+
+    private var engine: TranslationEngine {
+        TranslationEngine(rawValue: engineRaw) ?? .auto
+    }
+
+    private var currentTarget: TranslationTarget {
+        TranslationTarget(rawValue: targetRaw) ?? .simplifiedChinese
+    }
+
+    /// `auto` 模式下实际会走哪条腿 —— 用户最想知道的就是这个。
+    private var effectiveEngineLabel: String {
+        TranslationPrefs.usesLLM ? "大模型" : "系统端上"
+    }
 
     var body: some View {
         Form {
+            Section {
+                Picker("引擎", selection: $engineRaw) {
+                    ForEach(TranslationEngine.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                HStack {
+                    Text("当前生效")
+                    Spacer()
+                    Text(effectiveEngineLabel)
+                        .foregroundColor(.secondary)
+                }
+                Text(engine.detail)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("引擎")
+            } footer: {
+                Text("「自动」= 下面填了接口就用大模型，没填就用系统端上模型。这样临时清空 Key 也不会变成点翻译没反应。")
+            }
+
+            Section {
+                TextField("接口地址", text: $baseURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .onSubmit { saveKey() }
+
+                HStack {
+                    if revealKey {
+                        TextField("API Key", text: $apiKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    } else {
+                        SecureField("API Key", text: $apiKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    Button {
+                        revealKey.toggle()
+                    } label: {
+                        Image(systemName: revealKey ? "eye.slash" : "eye")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                TextField("模型名", text: $model)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Button {
+                    Task { await runTest() }
+                } label: {
+                    HStack {
+                        Text(testing ? "正在测…" : "测试连接")
+                        if testing {
+                            Spacer()
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                }
+                .disabled(testing || baseURL.isEmpty || apiKey.isEmpty || model.isEmpty)
+
+                if let testMessage {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: testOK == true ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundColor(testOK == true ? .green : .red)
+                        Text(testMessage)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } header: {
+                Text("大模型接口")
+            } footer: {
+                Text("OpenAI 兼容的 `/chat/completions` 接口，填到 `/v1` 为止就行，剩下的自动拼。\n例如 DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`；OpenAI：`https://api.openai.com/v1` + `gpt-4o-mini`；本地 Ollama：`http://192.168.2.144:11434/v1` + 模型名。\n\n⚠️ 走大模型时，识别出的台词**文字**会发到这个接口（图片不会，图片从来不出手机）。不想外发就把引擎切到「系统端上翻译」。")
+            }
+
             Section {
                 Picker("翻成", selection: $targetRaw) {
                     ForEach(TranslationTarget.allCases) { target in
@@ -30,16 +135,10 @@ struct TranslationSettingsView: View {
                         Text(hint.title).tag(hint.rawValue)
                     }
                 }
-                if !installedPairs.isEmpty {
-                    Label("有语言包还没下载，第一次翻译时会提示下载",
-                          systemImage: "arrow.down.circle")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
             } header: {
                 Text("语言")
             } footer: {
-                Text("原文语种选「自动识别」时会先按假名/谚文判断，再退回系统语种识别。日漫漫画里汉字多，自动识别偶尔会把日文当成中文 —— 只日漫的话直接选「日文优先」，识别会稳不少。")
+                Text("「原文语种」只影响识别，不影响翻译。选「自动识别」时会先按假名/谚文判断，再退回系统语种识别 —— 日漫里汉字多，自动识别偶尔会把日文当成中文，只日漫的话直接选「日文优先」。")
             }
 
             Section {
@@ -80,21 +179,18 @@ struct TranslationSettingsView: View {
             } header: {
                 Text("存储")
             } footer: {
-                Text("识别结果和译文都存在本地，同一页翻第二次是秒开。清除后下次看会重新识别。")
-            }
-
-            Section {
-                Text("翻译全部在手机本地完成：图片不出设备，文字不外发，不需要任何 API key。第一次翻某个语言对时，iOS 会弹窗让你下载对应的语言包（几十 MB，装一次就行），之后完全离线可用。")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            } header: {
-                Text("关于")
+                Text("识别结果和译文都存在本地，同一页翻第二次是秒开。清除后下次看会重新识别、重新调接口。")
             }
         }
         .navigationTitle("翻译")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { cacheSize = TranslationCache.formattedSize() }
-        .task { await checkAvailability() }
+        .onAppear {
+            apiKey = TranslationPrefs.llmAPIKey
+            cacheSize = TranslationCache.formattedSize()
+        }
+        .onChange(of: apiKey) { _ in
+            saveKey()
+        }
         .confirmationDialog("清除翻译缓存？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清除", role: .destructive) {
                 TranslationCache.clear()
@@ -107,17 +203,28 @@ struct TranslationSettingsView: View {
         }
     }
 
-    /// 顺手把「目标语言的包装没装」查出来，没装就提示一句 ——
-    /// 不然用户第一次点翻译会莫名其妙弹一个系统下载框。
-    private func checkAvailability() async {
-        let target = TranslationTarget(rawValue: targetRaw) ?? .simplifiedChinese
-        let availability = LanguageAvailability()
-        var missing: [String] = []
-        for code in ["ja", "en", "ko", "zh"] where code != target.rawValue {
-            let status = await availability.status(from: Locale.Language(identifier: code),
-                                                   to: target.language)
-            if status == .supported { missing.append(code) }
+    private func saveKey() {
+        TranslationPrefs.saveAPIKey(apiKey)
+    }
+
+    private func runTest() async {
+        testing = true
+        testMessage = nil
+        testOK = nil
+        defer { testing = false }
+
+        let config = LLMConfig(baseURL: baseURL, apiKey: apiKey, model: model)
+        do {
+            let sample = try await LLMTranslator.test(config: config, target: currentTarget)
+            testOK = true
+            testMessage = "通了。示例译文：\(sample)"
+        } catch {
+            testOK = false
+            if let llm = error as? LLMTranslateError {
+                testMessage = llm.errorDescription
+            } else {
+                testMessage = error.localizedDescription
+            }
         }
-        installedPairs = missing
     }
 }
