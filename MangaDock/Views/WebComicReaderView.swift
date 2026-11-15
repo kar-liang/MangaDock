@@ -5,13 +5,21 @@ final class WebImageLoader {
     static let shared = WebImageLoader()
 
     private let cache = NSCache<NSString, UIImage>()
+    /// 原始字节缓存。翻译的 OCR 要的是原始 Data —— 既不能拿已解码的 UIImage
+    /// 重新编码一遍（画质/耗时都不划算），也不能为了 OCR 把同一张图再下一遍。
+    private let dataCache = NSCache<NSString, NSData>()
     private let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
-    private init() { cache.countLimit = 12 }
+    private init() {
+        cache.countLimit = 12
+        dataCache.countLimit = 64
+        dataCache.totalCostLimit = 80 * 1024 * 1024
+    }
 
-    func image(for url: URL, referer: URL) async -> UIImage? {
+    /// 原始字节。图片显示和 OCR 共用这一次请求。
+    func data(for url: URL, referer: URL) async -> Data? {
         let key = url.absoluteString as NSString
-        if let hit = cache.object(forKey: key) { return hit }
+        if let hit = dataCache.object(forKey: key) { return hit as Data }
 
         var request = URLRequest(url: url)
         // Many comic CDNs reject requests without a matching Referer.
@@ -19,7 +27,22 @@ final class WebImageLoader {
         request.setValue(ua, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 25
 
-        guard let (data, _) = try? await ABSSession.shared.data(for: request),
+        guard let (data, response) = try? await ABSSession.shared.data(for: request) else {
+            return nil
+        }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            return nil
+        }
+        guard !data.isEmpty else { return nil }
+        dataCache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
+    }
+
+    func image(for url: URL, referer: URL) async -> UIImage? {
+        let key = url.absoluteString as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+
+        guard let data = await data(for: url, referer: referer),
               let decoded = UIImage(data: data) else { return nil }
         cache.setObject(decoded, forKey: key)
         return decoded
@@ -31,11 +54,25 @@ final class WebImageLoader {
 struct WebComicImage: View {
     let url: URL
     let referer: URL
+    /// 译文层按「章节 + 页号」定位，跟本地漫画用同一套缓存键。
+    /// nil = 这是书架上的封面缩略图之类，不挂译文层。
+    var chapterURL: URL? = nil
+    var pageIndex: Int = 0
     var aspect: CGFloat = 0.68
     var onAspect: ((CGFloat) -> Void)? = nil
 
+    @ObservedObject private var translation = TranslationService.shared
+    @AppStorage(TranslationPrefs.enabledKey) private var translationEnabled = false
+
     @State private var image: UIImage?
     @State private var failed = false
+
+    /// 已翻出来的块。空数组时不叠层 —— 原文本来就在图上，盖一层空壳纯属碍事。
+    private var translatedBlocks: [TextBlock] {
+        guard translationEnabled, let chapter = chapterURL else { return [] }
+        let key = TranslationService.key(chapter: chapter, page: pageIndex)
+        return translation.state(for: key).blocks
+    }
 
     var body: some View {
         ZStack {
@@ -58,6 +95,19 @@ struct WebComicImage: View {
                 ProgressView()
                     .tint(.white.opacity(0.7))
                     .frame(height: 220)
+            }
+
+            if !translatedBlocks.isEmpty {
+                // ZStack 已经被外层 .aspectRatio 约束成图片的显示尺寸，
+                // 所以这里拿到的 size 就是图片真正占的那块，坐标能对上。
+                GeometryReader { geometry in
+                    TranslationLayer(blocks: translatedBlocks,
+                                     size: geometry.size,
+                                     zoomScale: 1,
+                                     fontSize: TranslationPrefs.fontSize)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+                .allowsHitTesting(false)
             }
         }
         .aspectRatio(aspect, contentMode: .fit)
@@ -88,6 +138,8 @@ struct WebComicReaderView: View {
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var webStore = WebComicStore.shared
+    @ObservedObject private var translation = TranslationService.shared
+    @AppStorage(TranslationPrefs.enabledKey) private var translationEnabled = false
     @State private var pages: [URL] = []
     @State private var aspects: [Int: CGFloat] = [:]
     @State private var isLoading = true
@@ -95,6 +147,12 @@ struct WebComicReaderView: View {
     @State private var showBar = true
     /// Highest page index that has scrolled into view this session (progress).
     @State private var furthestPage = 0
+    /// 当前正在看的页（onAppear 最近触发的那个）。跟 furthestPage 分开：
+    /// 往回翻时 furthestPage 不动，但翻译应该跟着视线走。
+    @State private var currentPage = 0
+    /// 预载翻译的串行任务 + 防抖锚点（onAppear 会反复触发）。
+    @State private var prefetchTask: Task<Void, Never>?
+    @State private var translateAnchor = -1
 
     private var base: URL? { source.url }
 
@@ -128,6 +186,8 @@ struct WebComicReaderView: View {
                             ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
                                 WebComicImage(url: page,
                                               referer: base ?? page,
+                                              chapterURL: base ?? page,
+                                              pageIndex: index,
                                               aspect: aspects[index] ?? 0.68) { ratio in
                                     aspects[index] = ratio
                                 }
@@ -135,6 +195,8 @@ struct WebComicReaderView: View {
                                 .frame(maxWidth: .infinity)
                                 .onAppear {
                                     if index > furthestPage { furthestPage = index }
+                                    currentPage = index
+                                    scheduleTranslation(from: index)
                                 }
                             }
                         }
@@ -155,6 +217,8 @@ struct WebComicReaderView: View {
         .preferredColorScheme(.dark)
         .task { await reload() }
         .onDisappear {
+            prefetchTask?.cancel()
+            prefetchTask = nil
             if let url = source.url, !pages.isEmpty {
                 webStore.recordProgress(url: url, page: furthestPage, pageCount: pages.count)
             }
@@ -196,6 +260,18 @@ struct WebComicReaderView: View {
             Spacer(minLength: 6)
 
             Button {
+                toggleTranslation()
+            } label: {
+                Image(systemName: "translate")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(translationEnabled ? .orange : .white)
+                    .frame(width: 34, height: 32)
+                    .background(Color.white.opacity(0.16), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(translationEnabled ? "关闭翻译" : "翻译这一页")
+
+            Button {
                 Task { await reload() }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -210,6 +286,56 @@ struct WebComicReaderView: View {
         .padding(.top, 6)
     }
 
+    /// 翻译开关。跟本地阅读器一个逻辑：译文层纯叠加，原图一个像素不动。
+    private func toggleTranslation() {
+        translationEnabled.toggle()
+        guard translationEnabled else {
+            prefetchTask?.cancel()
+            prefetchTask = nil
+            translateAnchor = -1
+            return
+        }
+        translateAnchor = -1
+        scheduleTranslation(from: currentPage)
+    }
+
+    /// 翻当前页 + 预载后面几页。
+    ///
+    /// 串行推进（一页翻完再下一页），跟本地漫画一样 —— 几页同时 OCR 会把机器压死。
+    /// `onAppear` 会反复触发，所以用 `translateAnchor` 防抖：页号没变就不重排，
+    /// 否则每出现一页都把上一轮取消，永远停在第一页。
+    private func scheduleTranslation(from page: Int) {
+        guard page != translateAnchor else { return }
+        translateAnchor = page
+
+        prefetchTask?.cancel()
+        prefetchTask = nil
+
+        guard translationEnabled, let chapterURL = source.url else { return }
+        let count = TranslationPrefs.prefetchCount
+        let total = pages.count
+        guard total > 0 else { return }
+
+        prefetchTask = Task {
+            // offset 从 0 开始：当前页本身也要翻。
+            for offset in 0...max(0, count) {
+                if Task.isCancelled { return }
+                let target = page + offset
+                guard target >= 0, target < total else { return }
+
+                let key = TranslationService.key(chapter: chapterURL, page: target)
+                // 只推进没开始过的页，失败页不重试（省 token）。
+                guard translation.state(for: key).phase == .idle else { continue }
+
+                let pageURL = pages[target]
+                guard let data = await WebImageLoader.shared.data(for: pageURL,
+                                                                  referer: chapterURL) else { continue }
+                if Task.isCancelled { return }
+                await translation.translate(chapter: chapterURL, page: target, data: data)
+            }
+        }
+    }
+
     private func reload() async {
         guard let url = source.url else {
             errorMessage = "网址无效"
@@ -220,6 +346,9 @@ struct WebComicReaderView: View {
         errorMessage = nil
         pages = []
         aspects = [:]
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        translateAnchor = -1
         do {
             let result = try await WebComicParser.parse(url)
             pages = result.pages
