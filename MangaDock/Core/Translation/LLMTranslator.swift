@@ -76,8 +76,14 @@ enum LLMTranslateError: LocalizedError {
         case .emptyResponse:
             return "模型返回了空内容"
         case .unparsable(let raw):
-            let preview = raw.count > 60 ? String(raw.prefix(60)) + "…" : raw
-            return "模型返回的内容解析不了：\(preview)"
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let preview = trimmed.count > 110 ? String(trimmed.prefix(110)) + "…" : trimmed
+            // 结尾既不是 } 也不是 ]，基本就是 max_tokens 用完了被截断。
+            // 这跟「模型乱说话」是两回事，提示得分开。
+            let looksTruncated = !(trimmed.hasSuffix("}") || trimmed.hasSuffix("]"))
+            return looksTruncated
+                ? "模型输出被截断（共 \(trimmed.count) 字）：\(preview)"
+                : "模型返回解析不了：\(preview)"
         case .network(let message):
             return "连不上接口：\(message)"
         }
@@ -197,7 +203,11 @@ enum LLMTranslator {
             throw LLMTranslateError.emptyResponse
         }
         let parsed = Self.parseTranslations(content)
-        guard !parsed.isEmpty else { throw LLMTranslateError.unparsable(content) }
+        guard !parsed.isEmpty else {
+            // 把原始返回记进诊断日志。这类问题光看错误提示只能猜，得看模型到底吐了什么。
+            diagAsync("translate", "llm parse failed len=\(content.count) raw=\(content.prefix(400))")
+            throw LLMTranslateError.unparsable(content)
+        }
         return parsed
     }
 
@@ -219,7 +229,9 @@ enum LLMTranslator {
         3. 拟声词翻成对应的中文拟声词（ドキドキ → 怦怦、バン → 砰、ざわざわ → 嘈杂）。
         4. 原文里没说的话不要补，原文有的意思不要省。
         5. 不要加任何解释、注释、罗马音、括号补充说明。
-        6. 只输出 JSON 对象，形如 {"0": "译文", "1": "译文"}。不要 markdown 代码块，不要前后废话。
+        6. 只输出一个 JSON **对象**，形如 {"0": "译文", "1": "译文"}。
+           注意：输入虽然是数组，输出必须是对象 —— 不要返回 [{"id": "0", "text": "译文"}] 这种数组。
+           不要 markdown 代码块，不要前后废话。
         """
     }
 
@@ -248,48 +260,132 @@ enum LLMTranslator {
 
     /// 从模型返回里抠出 `id → 译文`。
     ///
-    /// 分三层兜底，因为「只输出 JSON」这条约束模型并不总是听话：
-    /// 1. 直接当 JSON 解
-    /// 2. 去掉 ```json 围栏后再解
-    /// 3. 截取第一个 `{` 到最后一个 `}` 再解
-    /// 全失败就返回空，让上层报「解析不了」并显示原文片段。
+    /// 「只输出 JSON 对象」这条约束模型并不总是听话。实际见过这些形态：
+    ///
+    /// 1. `{"0": "译文", "1": "译文"}` —— prompt 里要的形状
+    /// 2. `[{"id": "0", "text": "译文"}, ...]` —— **最常见**，模型照抄输入的数组形状
+    /// 3. `{"translations": {"0": "译文"}}` —— 自己又套了一层
+    /// 4. 任何一种外面裹了 ```json 围栏，或前后带一句「好的，这是翻译：」
+    ///
+    /// 原来只解第 1 种，所以第 2 种必挂 —— 而且「截取花括号」那层兜底在数组上
+    /// 会截出 `{"id":"0"},{"id":"1"}` 这种非法 JSON，越兜越错。
     static func parseTranslations(_ raw: String) -> [Int: String] {
-        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = stripCodeFence(raw.trimmingCharacters(in: .whitespacesAndNewlines))
 
-        if let direct = decodeJSONObject(text) { return direct }
+        // 直接解
+        if let direct = decodeAnyJSON(text) { return direct }
 
-        // 去 markdown 围栏
-        if text.hasPrefix("```") {
-            var lines = text.components(separatedBy: .newlines)
-            if !lines.isEmpty { lines.removeFirst() }
-            if let last = lines.last, last.hasPrefix("```") { lines.removeLast() }
-            text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if let fenced = decodeJSONObject(text) { return fenced }
-        }
-
-        // 前后有废话：截取最外层花括号
-        if let start = text.firstIndex(of: "{"),
-           let end = text.lastIndex(of: "}"), start < end {
-            let slice = String(text[start...end])
-            if let wrapped = decodeJSONObject(slice) { return wrapped }
+        // 前后有废话：截取最外层 {...} 或 [...]
+        if let slice = outerJSONSlice(text), let wrapped = decodeAnyJSON(slice) {
+            return wrapped
         }
 
         return [:]
     }
 
-    private static func decodeJSONObject(_ text: String) -> [Int: String]? {
-        guard let data = text.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    /// 去掉 ```json / ``` 围栏。模型很爱加，尤其刚被要求过「只输出 JSON」。
+    private static func stripCodeFence(_ text: String) -> String {
+        guard text.hasPrefix("```") else { return text }
+        var lines = text.components(separatedBy: .newlines)
+        if !lines.isEmpty { lines.removeFirst() }
+        if let last = lines.last,
+           last.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+            lines.removeLast()
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 截出最外层的 JSON 片段。开闭符号都要认 —— 只找花括号的话，
+    /// 模型返回数组时会截成 `{"id":"0"},{"id":"1"}`，那不是合法 JSON。
+    private static func outerJSONSlice(_ text: String) -> String? {
+        guard let start = text.firstIndex(where: { $0 == "{" || $0 == "[" }) else { return nil }
+        guard let end = text.lastIndex(where: { $0 == "}" || $0 == "]" }), end > start else {
             return nil
         }
+        return String(text[start...end])
+    }
+
+    private static func decodeAnyJSON(_ text: String) -> [Int: String]? {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+
+        if let dict = object as? [String: Any] { return extractObject(dict) }
+        if let array = object as? [[String: Any]] { return extractArray(array) }
+        return nil
+    }
+
+    /// `{"0": "译文"}` / `{"0": {"text": "..."}}` / `{"translations": {"0": "..."}}`
+    private static func extractObject(_ dict: [String: Any]) -> [Int: String]? {
         var result: [Int: String] = [:]
-        for (key, value) in object {
+
+        for (key, value) in dict {
             guard let id = Int(key) else { continue }
-            if let string = value as? String {
-                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { result[id] = trimmed }
+            if let text = stringValue(value) {
+                result[id] = text
+            } else if let nested = value as? [String: Any],
+                      let text = stringValue(firstPresent(nested, ["text", "translation",
+                                                                   "target", "translated",
+                                                                   "content"])) {
+                result[id] = text
+            }
+        }
+        if !result.isEmpty { return result }
+
+        // 再退一层：整份结果套在一个键下面（`{"translations": {...}}`）
+        for value in dict.values {
+            guard let nested = value as? [String: Any] else { continue }
+            var inner: [Int: String] = [:]
+            for (key, raw) in nested {
+                if let id = Int(key), let text = stringValue(raw) { inner[id] = text }
+            }
+            if !inner.isEmpty { return inner }
+        }
+        return nil
+    }
+
+    /// `[{"id": "0", "text": "..."}, ...]` —— 模型最常见的偷懒方式
+    private static func extractArray(_ array: [[String: Any]]) -> [Int: String]? {
+        var result: [Int: String] = [:]
+        for item in array {
+            guard let id = intValue(firstPresent(item, ["id", "index", "page", "no", "seq"])) else {
+                continue
+            }
+            if let text = stringValue(firstPresent(item, ["text", "translation", "target",
+                                                          "translated", "content", "zh", "value"])) {
+                result[id] = text
             }
         }
         return result.isEmpty ? nil : result
+    }
+
+    private static func firstPresent(_ dict: [String: Any], _ keys: [String]) -> Any? {
+        for key in keys {
+            if let value = dict[key], !(value is NSNull) { return value }
+        }
+        return nil
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        let raw: String?
+        if let text = value as? String {
+            raw = text
+        } else if let number = value as? NSNumber {
+            // 译文是纯数字时模型会给 number 而不是 string
+            raw = number.stringValue
+        } else {
+            raw = nil
+        }
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        guard let value else { return nil }
+        if let number = value as? Int { return number }
+        if let text = value as? String { return Int(text.trimmingCharacters(in: .whitespaces)) }
+        if let number = value as? NSNumber { return number.intValue }
+        return nil
     }
 }
